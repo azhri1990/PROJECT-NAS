@@ -1,0 +1,30 @@
+# Local runtime state
+claude-mem-db/
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs / local outputs
+*.log
+*.tmp
+
+# Secrets
+*.pem
+*.key
+credentials.json
+secrets.json
