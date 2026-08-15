@@ -42,7 +42,7 @@ def health():
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json(silent=True)
-    if not data:
+    if data is None:
         return jsonify({"error": "Request body must be valid JSON."}), 400
 
     user_prompt = data.get("prompt")
