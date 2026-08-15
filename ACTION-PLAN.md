@@ -4,6 +4,16 @@ Goal
 ----
 Maintain a reproducible, local-first runtime whose documented state matches the code and whose core behavior is continuously tested.
 
+Operating constraints
+---------------------
+1. **$0 additional spend is the default.** Local/open-source runtimes and existing hardware are preferred.
+2. Paid cloud providers, paid APIs, and metered fallbacks stay disabled unless explicitly authorized.
+3. If a selected tool/interface reaches a usage, credit, token, or capability limit, route to the next compatible local/available interface instead of silently spending money.
+4. If no safe fallback exists, stop the active implementation step, persist the current state, test results, decisions, and exact next action in GitHub, then resume from that checkpoint later.
+5. PROJECT-NAS remains the orchestration, policy, memory, and audit boundary. External agents and mobile apps are capability providers, not trusted authorities.
+6. Never expose unrestricted shell, filesystem, device-control, GitHub, or credential access to model output.
+7. Never claim a feature is complete without executable verification.
+
 Current baseline
 ----------------
 1. `runtime/progress.py` — repository progress reporter.
@@ -37,16 +47,22 @@ Verified fixes
 - Added an explicit network allowlist for non-loopback provider endpoints.
 - Added `runtime/__init__.py` so the new runtime package is importable by CI tests.
 
-Next engineering gate
+Next engineering gates
+----------------------
+1. Complete and pass the full CI suite on the Omni bridge branch.
+2. Add end-to-end `/chat` tests using a fake local Ollama endpoint and isolated Chroma storage.
+3. Add deterministic local-first fallback routing behind the Omni provider registry, with paid providers disabled by default.
+4. Add capability negotiation, authentication, approval policy, sandboxing, and audit logging before delegating Hermes/OpenClaw/Termux terminal, filesystem, notification, media, or device-control actions.
+5. Add model discovery and health-aware routing without automatic paid fallback.
+6. Add context-budgeting/compression before large MASTER_PROMPT + memory payloads reach a model.
+7. Add explicit memory retention/redaction policy before expanding automatic memory writes.
+8. Add verified Codex Mobile, PocketPal, and OfflineGPT adapters only when stable machine-readable APIs are available.
+9. Perform a repository-wide security review before exposing remote device control.
+10. Keep a machine-readable/persistent checkpoint in GitHub whenever work pauses, hits a tool limit, or requires a different interface.
+
+Continuation protocol
 ---------------------
-1. Re-run and pass the complete CI suite on the Omni bridge branch.
-2. Add end-to-end tests for `/chat` with a fake local Ollama endpoint and isolated Chroma storage.
-3. Add policy/capability negotiation before delegating Hermes Agent Android terminal, filesystem, notification, media, or device-control actions.
-4. Add model discovery and deterministic fallback routing behind the Omni provider registry.
-5. Add context-budgeting/compression before large MASTER_PROMPT + memory payloads reach a model.
-6. Add explicit memory retention/redaction policy before expanding automatic memory writes.
-7. Add verified Codex Mobile, PocketPal, and OfflineGPT adapters only when stable machine-readable APIs are available.
-8. Perform a repository-wide security review before exposing remote device control.
+When continuing work, inspect this file and the current Git/CI state first. Resume from the first incomplete engineering gate; do not restart completed work. For every completed gate, record the verification evidence in the relevant PR/commit documentation. If an interface becomes unavailable, use the next compatible interface while preserving the same repository state and tests.
 
 Principle
 ---------
