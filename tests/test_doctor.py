@@ -1,0 +1,35 @@
+import importlib.util
+from pathlib import Path
+
+DOCTOR_PATH = Path(__file__).resolve().parents[1] / "runtime" / "doctor.py"
+
+
+def load_doctor():
+    spec = importlib.util.spec_from_file_location("project_nas_doctor", DOCTOR_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_doctor_repository_is_independent_of_cwd(monkeypatch, tmp_path):
+    doctor = load_doctor()
+    monkeypatch.chdir(tmp_path)
+    result = doctor.check_repository()
+    assert result.ok
+
+
+def test_doctor_database_uses_configured_path(monkeypatch, tmp_path):
+    doctor = load_doctor()
+    db_path = tmp_path / "nas" / "session.db"
+    monkeypatch.setenv("PROJECT_NAS_SESSION_DB", str(db_path))
+    result = doctor.check_database()
+    assert result.ok
+    assert db_path.exists()
+
+
+def test_doctor_reports_unreachable_ollama_without_crashing(monkeypatch):
+    doctor = load_doctor()
+    monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:1/api/tags")
+    result = doctor.check_ollama()
+    assert not result.ok
+    assert "unreachable" in result.detail
