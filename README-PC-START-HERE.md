@@ -14,16 +14,18 @@ Start with:
 
 ## Omni mobile AI bridge
 
-PROJECT-NAS can now discover and health-check explicitly configured OpenAI-compatible local/mobile endpoints. The first supported bridge targets Ollama Local AI and Hermes Agent. Hermes-Relay and Codex Mobile remain operator/device surfaces; PocketPal and OfflineGPT remain optional until a verified machine-readable API is available.
+PROJECT-NAS can now discover and health-check explicitly configured OpenAI-compatible local/mobile endpoints. The first directly supported mobile endpoint is Ollama Local AI. Hermes Agent - Android, Hermes-Relay, and Codex Mobile remain operator/device surfaces until their machine-readable integration boundaries are explicitly verified. PocketPal and OfflineGPT remain optional until a verified API is available.
+
+A separate generic OpenAI-compatible adapter can connect to a verified server endpoint, including a separately operated Hermes API server, without conflating that server with the Android Hermes app.
 
 Example environment configuration:
 
 ```text
 PROJECT_NAS_OMNI_OLLAMA_URL=http://192.168.1.20:11434/v1
 PROJECT_NAS_OMNI_OLLAMA_MODEL=qwen3
-PROJECT_NAS_OMNI_HERMES_URL=http://192.168.1.30:8642/v1
-PROJECT_NAS_OMNI_HERMES_MODEL=hermes-agent
-PROJECT_NAS_OMNI_HERMES_API_KEY_ENV=HERMES_API_SERVER_KEY
+PROJECT_NAS_OMNI_COMPAT_URL=http://192.168.1.30:8642/v1
+PROJECT_NAS_OMNI_COMPAT_MODEL=hermes-agent
+PROJECT_NAS_OMNI_COMPAT_API_KEY_ENV=HERMES_API_SERVER_KEY
 PROJECT_NAS_OMNI_ALLOWED_HOSTS=192.168.1.20,192.168.1.30
 ```
 
