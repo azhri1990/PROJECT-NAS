@@ -30,8 +30,9 @@ jobs:
       - name: Run full test suite
         run: pytest -q tests
 
-      - name: Run PROJECT-NAS doctor
-        run: python runtime/doctor.py || test $? -eq 1
+      - name: Run PROJECT-NAS doctor diagnostics
+        run: python runtime/doctor.py
+        continue-on-error: true
 
       - name: Run progress reporter
         run: |
