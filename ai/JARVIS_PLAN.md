@@ -1,68 +1,73 @@
-PROJECT-NAS: JARVIS-Like Assistant — Overview & Roadmap
+PROJECT-NAS: JARVIS-Like Assistant — Current Architecture & Roadmap
 
 Objective
 ---------
-Turn PROJECT-NAS into a cross-platform, privacy-first, "Jarvis-like" assistant available on PC, mobile, and tablet that helps manage projects, surface context, run automation, and act as a strategic AI advisor using the existing MASTER_PROMPT and consolidated profile resources.
+Turn PROJECT-NAS into a cross-platform, privacy-first, local-first assistant for PC, mobile, and tablet that manages projects, surfaces context, runs automation, and acts as a strategic AI advisor.
 
-Core capabilities (MVP)
------------------------
-- Local-first backend that can run on user machines (desktop/laptop) and optionally on a small server.
-- Persistent session memory and todos (already present as a session SQLite DB) accessible through a local API.
-- Prompt loader that supplies the canonical MASTER_PROMPT / AI operating system to any local agent or automation.
-- Cross-platform UI: Electron-based desktop app plus a Progressive Web App (PWA) for mobile/tablet.
-- Short prompt command system (slash-commands) supported by UI shortcuts and templates (e.g., /firstdraft, /qa, /handoff).
-- Actionables: export/import of session state, attach artifacts to PRs, and run repository checks (progress reporter exists).
-- Voice input/output (STT/TTS) for conversational interactions.
+Current implemented runtime
+---------------------------
+- FastAPI backend: `runtime/backend.py`
+  - `/` service health
+  - `/prompt` canonical prompt retrieval
+  - `/progress` repository state
+  - `/todos` CRUD persistence
+  - `/custom/{plugin_name}` trusted local plugin execution with filename validation
+- Local LLM/memory bridge: `runtime/memory_injector.py`
+  - Flask `/health` and `/chat`
+  - Chroma persistent memory
+  - Ollama local generation
+  - configurable via `PROJECT_NAS_MEMORY_DB`, `PROJECT_NAS_OLLAMA_URL`, and `PROJECT_NAS_OLLAMA_MODEL`
+  - default model: `llama3.2:3b`
+- Prompt loader: `runtime/prompt_loader.py`, independent of current working directory.
+- Progress reporter: `runtime/progress.py`.
+- Shell wrapper: `runtime/project-nas.sh`, rooted to the repository rather than the caller's working directory.
+- Runtime dependency manifest: `requirements-runtime.txt`.
+- CI: `.github/workflows/progress-check.yml` runs compilation and the complete test suite.
+- Tests cover backend, progress, prompt loading, and local LLM configuration.
 
-Architecture (high level)
+Architecture
+------------
+Backend: FastAPI local API for system state, prompts, progress, todos, and controlled extensions.
+LLM bridge: Flask service to local Ollama + Chroma memory.
+Persistence: SQLite for application/session todos and Chroma for vector memory.
+Frontend: not yet implemented in this repository; planned Electron desktop + responsive PWA.
+Voice: not yet implemented; planned local/browser STT/TTS.
+Cloud providers: optional future integrations only; local execution remains the default.
+
+Security/privacy baseline
 -------------------------
-- Backend: FastAPI (Python) or lightweight local process that exposes:
-  - /progress (returns runtime/progress output)
-  - /prompt (returns canonical MASTER_PROMPT)
-  - /todos (CRUD for session todos; proxies the session SQLite DB)
-  - /ask (accepts user prompt, runs against LLM bridge or local model)
-- Frontend:
-  - Electron app (desktop) wrapping a React/Preact UI that talks to backend on localhost.
-  - PWA deployed from repo for mobile/tablet; same UI codebase used with responsive design.
-- Optional bridge to cloud LLMs with configurable provider keys (user opt-in). Local-first by default.
-- Persistence: session SQLite DB (existing), plus optional encrypted sync to user cloud storage.
-- Extensions: plugin system to add connectors (GitHub, calendar, Slack, file stores).
+- No machine-specific absolute session DB path in source.
+- Local runtime state is ignored by Git.
+- Plugin route rejects non-identifier names to prevent path traversal.
+- Cloud LLM use is not required for the current runtime.
+- Secrets files and common private-key formats are excluded by `.gitignore`.
 
-Privacy & Safety
-----------------
-- Default to local-only execution and storage.
-- Any cloud LLM or sync is opt-in and requires explicit user configuration.
-- Mask or redact sensitive profile fields before saving in repo files (ai/PROFILE.md is redacted).
+Roadmap
+-------
+Phase 0 — Runtime foundation — substantially complete
+- Canonical prompt loading
+- Progress reporting
+- FastAPI backend
+- Local LLM/memory bridge
+- Runtime dependencies
+- Regression tests and CI
 
-Phased roadmap (recommended)
------------------------------
-Phase 0 — Tidy & bootstrap (1-2 days)
-- Import authoritative ai/MASTER_PROMPT.md and ai/PROFILE.md (redacted) into repo.
-- Add runtime/prompt_loader.py (to load prompt into automation).
-- Add ACTION-PLAN.md and JARVIS_PLAN.md (done/added).
+Phase 1 — Assistant MVP
+- Wire FastAPI `/ask`-style orchestration directly to the local LLM bridge, or consolidate `/chat` into FastAPI.
+- Add model health/discovery and fallback routing.
+- Add context budgeting/compression.
+- Add explicit memory write/read policies.
 
-Phase 1 — MVP local assistant (2-4 weeks)
-- Implement backend (FastAPI) with endpoints: /prompt, /progress, /todos, /ask (bridge to LLM or mock).
-- Build Electron UI that shows progress reporter, todos editor, and an "Ask Jarvis" chat view supporting slash-commands.
-- Wire prompt_loader into /ask so the assistant uses canonical MASTER_PROMPT.
-- Add basic STT/TTS support via browser APIs or native modules.
+Phase 2 — UI and device access
+- Electron desktop UI.
+- Responsive PWA for mobile/tablet.
+- Local voice input/output.
 
-Phase 2 — Tests, CI, and packaging (1-2 weeks)
-- Add tests for runtime/progress.py and prompt_loader.
-- Create CI workflow to run checks and tests.
-- Package Electron app for Windows/macOS/Linux and prepare PWA deployment.
+Phase 3 — Integrations and hardening
+- GitHub, calendar, files and other connectors.
+- Encrypted device sync where explicitly enabled.
+- Security scanning and threat-model-driven plugin controls.
 
-Phase 3 — Integrations & polish (ongoing)
-- Add GitHub integration (attach exports to PRs, create issues), calendar, file connectors.
-- Encrypted sync and device pairing for cross-device continuity.
-- Plugin marketplace and skilled memory feature extraction from imported documents (PDF/Word/Excel).
-
-Actionable next steps (pick which to run now)
----------------------------------------------
-1. Import AI artifacts: copy MASTER_PROMPT.md, Nash_Consolidated doc, and the PDF text into ai/ (requires PDF-to-text). (Recommended)
-2. Create runtime/prompt_loader.py (small utility) — will provide a canonical prompt to the backend and tools.
-3. Start backend skeleton (FastAPI) with /prompt and /progress endpoints.
-4. Create Electron app skeleton and wire to backend.
-
-Session todos created will track the work and can be progressed via the existing session DB.
-
+Important
+---------
+The roadmap is not a claim that future capabilities already exist. The repository's source and passing CI are the authoritative implementation state.
