@@ -104,12 +104,12 @@ async def progress(commits: int = 10):
 
 
 @app.get("/omni/providers")
-async def omni_providers():
+def omni_providers():
     return {"providers": get_omni_service().providers()}
 
 
 @app.get("/omni/health")
-async def omni_health():
+def omni_health():
     service = get_omni_service()
     health = service.health()
     if not health:
