@@ -15,7 +15,7 @@ Current baseline
 7. `requirements-runtime.txt` — explicit FastAPI/Uvicorn/Flask/Requests/Chroma runtime dependencies.
 8. `tests/` and `runtime/tests/` — regression and Omni bridge coverage.
 9. `.github/workflows/progress-check.yml` — compiles runtime/test Python and executes both test trees.
-10. `docs/OMNI-DEVICE-BRIDGES.md` — verified integration boundaries for Ollama Local AI, Hermes Agent, Hermes-Relay, Codex Mobile, PocketPal AI, and OfflineGPT.
+10. `docs/OMNI-DEVICE-BRIDGES.md` — verified integration boundaries for Ollama Local AI, Hermes Agent - Android, Hermes-Relay, Codex Mobile, PocketPal AI, and OfflineGPT.
 
 Verified fixes
 --------------
@@ -33,13 +33,15 @@ Verified fixes
 - Updated JARVIS documentation so it distinguishes implemented components from roadmap items.
 - Added local-first Omni provider contracts and health discovery without exposing provider secrets.
 - Added deterministic profiles for the six mobile AI integrations and disabled unsupported/unverified adapters by default.
+- Added a generic OpenAI-compatible adapter for a separately operated verified server endpoint.
 - Added an explicit network allowlist for non-loopback provider endpoints.
+- Added `runtime/__init__.py` so the new runtime package is importable by CI tests.
 
 Next engineering gate
 ---------------------
-1. Run the complete CI suite on the Omni bridge branch and fix any regressions.
+1. Re-run and pass the complete CI suite on the Omni bridge branch.
 2. Add end-to-end tests for `/chat` with a fake local Ollama endpoint and isolated Chroma storage.
-3. Add policy/capability negotiation before delegating Hermes terminal, filesystem, notification, media, or device-control actions.
+3. Add policy/capability negotiation before delegating Hermes Agent Android terminal, filesystem, notification, media, or device-control actions.
 4. Add model discovery and deterministic fallback routing behind the Omni provider registry.
 5. Add context-budgeting/compression before large MASTER_PROMPT + memory payloads reach a model.
 6. Add explicit memory retention/redaction policy before expanding automatic memory writes.
