@@ -14,6 +14,17 @@ Operating constraints
 6. Never expose unrestricted shell, filesystem, device-control, GitHub, or credential access to model output.
 7. Never claim a feature is complete without executable verification.
 
+Background-agent protocol
+-------------------------
+1. **Primary background coding path:** use Codex Cloud/Codex app with the GitHub repository when the account has included capacity. OpenAI documents Codex as the software-development experience and the Codex app as a command center for multiple agents, parallel work, isolated worktrees, and long-running tasks. Use repository branches/worktrees; never let an unattended agent write directly to `main`.
+2. **Mobile supervision:** use the Codex remote/mobile control surface to monitor or steer supported desktop/remote Codex work. Mobile control does not make the phone itself the trusted execution host.
+3. **$0 local fallback:** when cloud/Codex capacity is exhausted or unavailable, use a local agent on the existing Windows machine with local Ollama models where practical. The machine must remain powered and connected for unattended execution. Keep the local agent sandboxed to the repository.
+4. **Android fallback:** OpenClaw Node, Hermes Agent Android, Hermes-Relay, and Termux are capability surfaces only. They must connect through the PROJECT-NAS policy/capability layer before receiving terminal, filesystem, notification, media, or device-control authority.
+5. **No automatic paid escalation:** never switch to a paid API, paid agent, or metered model merely because a free/local interface is exhausted. If no compatible $0 path exists, checkpoint and wait.
+6. **Checkpoint before handoff:** every agent handoff must leave the repository in a recoverable Git state and update `docs/AUTOPILOT-CHECKPOINT.md` with active branch, last verified commit, current gate, test result, blockers, and exact next action.
+7. **Verification gate:** an agent may continue autonomously only after tests/typecheck/lint/build/security checks for its current scope pass. Failures must be fixed or checkpointed; never papered over.
+8. **Branch discipline:** unattended work uses feature branches/worktrees. Merging to `main`, changing branch protection, exposing secrets, enabling paid services, or granting unrestricted device control requires explicit human approval.
+
 Current baseline
 ----------------
 1. `runtime/progress.py` — repository progress reporter.
