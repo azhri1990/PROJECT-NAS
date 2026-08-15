@@ -48,7 +48,7 @@ def run_git_info(commits: int = 10) -> Dict[str, Any]:
     try:
         status = subprocess.check_output(
             ["git", "status", "--porcelain", "--branch"], text=True
-        )
+    )
     except Exception:
         status = ""
     try:
@@ -112,10 +112,13 @@ async def omni_providers():
 async def omni_health():
     service = get_omni_service()
     health = service.health()
-    return {
-        "status": "ok" if all(item["reachable"] for item in health) else "degraded",
-        "providers": health,
-    }
+    if not health:
+        status = "unconfigured"
+    elif all(item["reachable"] for item in health):
+        status = "ok"
+    else:
+        status = "degraded"
+    return {"status": status, "providers": health}
 
 
 @app.get("/todos")
