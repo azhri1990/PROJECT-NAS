@@ -1,12 +1,13 @@
 #!/bin/bash
-# PROJECT-NAS Universal Wrapper
+# PROJECT-NAS local wrapper
 
-set -uo pipefail
+set -euo pipefail
 
-MASTER_PROMPT_FILE="./CLAUDE.md"
-CHAT_URL="http://localhost:5000/chat"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+MASTER_PROMPT_FILE="$PROJECT_ROOT/ai/MASTER_PROMPT.md"
+CHAT_URL="${PROJECT_NAS_CHAT_URL:-http://127.0.0.1:5000/chat}"
 
-# Fail early and clearly if required tools are missing
 for cmd in curl jq; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "Error: '$cmd' is required but not installed." >&2
@@ -14,33 +15,27 @@ for cmd in curl jq; do
     fi
 done
 
-echo "Loading PROJECT-NAS OS Context..."
-if [ -f "$MASTER_PROMPT_FILE" ]; then
-    CONTEXT=$(cat "$MASTER_PROMPT_FILE")
-else
-    echo "Warning: CLAUDE.md not found. Run ./setup.sh first."
+if [ ! -f "$MASTER_PROMPT_FILE" ]; then
+    echo "Error: canonical prompt not found: $MASTER_PROMPT_FILE" >&2
     exit 1
 fi
 
-echo "Enter your command or question:"
-read -r USER_INPUT
+CONTEXT=$(cat "$MASTER_PROMPT_FILE")
+read -r -p "Enter your command or question: " USER_INPUT
 
 if [ -z "$USER_INPUT" ]; then
-    echo "Error: no input given."
+    echo "Error: no input given." >&2
     exit 1
 fi
 
-# Build JSON safely with jq instead of raw string interpolation.
-# This is what fixes the broken-JSON bug on quotes/apostrophes.
-# Context and prompt are sent as separate fields so the server can
-# tell "background info" apart from "the actual question."
 PAYLOAD=$(jq -n --arg context "$CONTEXT" --arg prompt "$USER_INPUT" \
   '{context: $context, prompt: $prompt}')
 
-if ! RESPONSE=$(curl -s -X POST "$CHAT_URL" \
+if ! RESPONSE=$(curl --fail-with-body -sS --connect-timeout 5 --max-time 120 \
+  -X POST "$CHAT_URL" \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD"); then
-    echo "Error: could not reach $CHAT_URL. Is memory_injector.py running?" >&2
+    echo "Error: could not complete request to $CHAT_URL. Is memory_injector.py running?" >&2
     exit 1
 fi
 
