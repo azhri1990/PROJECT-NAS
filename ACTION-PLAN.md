@@ -1,36 +1,44 @@
-Action plan for progress-update-query
+PROJECT-NAS — Runtime Action Plan
 
 Goal
 ----
-Provide a reliable way to extract and report project progress (session todos + repository state) so automation and reviewers can see current work and resume it.
+Maintain a reproducible, local-first runtime whose documented state matches the code and whose core behavior is continuously tested.
 
-Scope & Deliverables
---------------------
-1. runtime/progress.py — CLI that outputs JSON with branch, recent commits, working-tree status, and optional session todos from a provided SQLite DB.
-2. runtime/progress.ps1 — PowerShell fallback for Windows environments without Python.
-3. Documentation: ACTION-PLAN.md — this file describes how to run and extend the tool.
-4. Tests: tests/test_progress.py — validates JSON output shape and SQLite todo loading.
-5. CI: .github/workflows/progress-check.yml — compiles Python sources, runs the progress tests, and verifies the reporter returns a branch value and recent commits.
+Current baseline
+----------------
+1. `runtime/progress.py` — repository progress reporter.
+2. `runtime/progress.ps1` — Windows PowerShell fallback.
+3. `runtime/prompt_loader.py` — canonical prompt loader, independent of cwd.
+4. `runtime/backend.py` — FastAPI local backend with prompt, progress, todos, and validated custom-plugin endpoints.
+5. `runtime/memory_injector.py` — Flask bridge to Chroma + local Ollama.
+6. `requirements-runtime.txt` — explicit FastAPI/Uvicorn/Flask/Requests/Chroma runtime dependencies.
+7. `tests/` — regression coverage for backend, progress, prompt loader, and LLM configuration.
+8. `.github/workflows/progress-check.yml` — compiles runtime/test Python and executes the full test suite.
 
-Completed
+Verified fixes
+--------------
+- Removed the machine-specific Copilot session DB path from the backend.
+- Added environment-configurable session and memory paths.
+- Added plugin-name validation against path traversal.
+- Corrected the memory bridge default model to the documented local `llama3.2:3b`.
+- Added configurable Ollama URL/model settings.
+- Added missing memory-runtime dependencies to CI/runtime requirements.
+- Removed the arbitrary ten-word minimum from `/chat`; transport now accepts valid prompts and lets the model decide whether more context is needed.
+- Made prompt loading independent of the caller's working directory.
+- Made the shell wrapper locate the repository from its own script path.
+- Hardened shell HTTP failure handling and timeouts.
+- Hardened progress reporter timestamp generation and argument validation.
+- Updated JARVIS documentation so it distinguishes implemented components from roadmap items.
+
+Next engineering gate
+---------------------
+1. Run the complete CI suite after the latest changes.
+2. Add end-to-end tests for `/chat` with a fake local Ollama endpoint and isolated Chroma storage.
+3. Add model discovery/health checks and deterministic fallback routing.
+4. Add context-budgeting/compression before large MASTER_PROMPT + memory payloads reach the model.
+5. Add explicit memory retention/redaction policy before expanding automatic memory writes.
+6. Perform a repository-wide security review before exposing plugins or remote device access.
+
+Principle
 ---------
-- Progress reporter and PowerShell fallback are present.
-- Feature branch `feature/implement-progress-endpoint` was merged into `main` as PR #1.
-- Added progress reporter tests.
-- Added a minimal dependency-free CI workflow for the progress subsystem.
-- Removed the generated Conda workflow because the repository has no `environment.yml` and the workflow could not provide a valid build.
-
-Next actions
-------------
-1. Confirm the new GitHub Actions run completes successfully.
-2. If CI passes, keep this workflow as the baseline CI gate for progress/runtime changes.
-3. Extend coverage to the FastAPI backend once its runtime dependency strategy is formalized.
-4. Add session integration through an environment/configured SQLite path rather than a machine-specific absolute path.
-
-Notes
------
-- The progress reporter itself uses only Python standard-library modules and Git.
-- The CI job installs only pytest; the runtime reporter has no third-party dependency requirement.
-- The local AI/memory stack remains separate from the dependency-free progress CI path.
-
-"Let's proceed to add tests and CI" is now implemented; verification is the remaining immediate gate.
+A feature is not considered complete because a file exists. It is complete only when its behavior is executable, tested, documented accurately, and reproducible on a clean environment.
