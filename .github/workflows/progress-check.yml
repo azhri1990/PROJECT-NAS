@@ -1,0 +1,42 @@
+name: PROJECT-NAS Progress Check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  progress-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile Python sources
+        run: python -m compileall -q runtime tests
+
+      - name: Run progress tests
+        run: |
+          python -m pip install --upgrade pip pytest
+          pytest -q tests/test_progress.py
+
+      - name: Run progress reporter
+        run: |
+          python runtime/progress.py --commits 5 > progress.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("progress.json").read_text(encoding="utf-8"))
+          repo = payload["repo"]
+          assert repo["branch"] not in (None, "", "unknown")
+          assert repo["recent_commits"]
+          print(f"CI progress check OK: branch={repo['branch']}, commits={len(repo['recent_commits'])}")
+          PY
