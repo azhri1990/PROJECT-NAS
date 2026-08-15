@@ -27,8 +27,8 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q runtime tests
 
-      - name: Run progress and backend tests
-        run: pytest -q tests/test_progress.py tests/test_backend.py
+      - name: Run full test suite
+        run: pytest -q tests
 
       - name: Run progress reporter
         run: |
