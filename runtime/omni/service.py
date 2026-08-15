@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import os
-from typing import Mapping, Sequence
+from typing import Sequence
 
 from .catalog import configured_provider, default_catalog
-from .models import ProviderConfig
 from .openai_compatible import OpenAICompatibleProvider
 from .providers import Message, ProviderRegistry
 from .security import is_allowed_provider_url, redact_provider_metadata
@@ -25,20 +24,28 @@ class OmniService:
             for value in os.environ.get("PROJECT_NAS_OMNI_ALLOWED_HOSTS", "").split(",")
             if value.strip()
         }
-        for profile in default_catalog():
-            if profile.name == "ollama-local-ai":
-                url = os.environ.get("PROJECT_NAS_OMNI_OLLAMA_URL")
-                model = os.environ.get("PROJECT_NAS_OMNI_OLLAMA_MODEL", "")
-                key_env = os.environ.get("PROJECT_NAS_OMNI_OLLAMA_API_KEY_ENV")
-            elif profile.name == "hermes-agent":
-                url = os.environ.get("PROJECT_NAS_OMNI_HERMES_URL")
-                model = os.environ.get("PROJECT_NAS_OMNI_HERMES_MODEL", "hermes-agent")
-                key_env = os.environ.get("PROJECT_NAS_OMNI_HERMES_API_KEY_ENV")
-            else:
-                continue
+        profiles = default_catalog()
+        profile_by_name = {profile.name: profile for profile in profiles}
 
+        endpoint_settings = (
+            (
+                "ollama-local-ai",
+                os.environ.get("PROJECT_NAS_OMNI_OLLAMA_URL"),
+                os.environ.get("PROJECT_NAS_OMNI_OLLAMA_MODEL", ""),
+                os.environ.get("PROJECT_NAS_OMNI_OLLAMA_API_KEY_ENV"),
+            ),
+            (
+                "custom-openai-compatible",
+                os.environ.get("PROJECT_NAS_OMNI_COMPAT_URL"),
+                os.environ.get("PROJECT_NAS_OMNI_COMPAT_MODEL", ""),
+                os.environ.get("PROJECT_NAS_OMNI_COMPAT_API_KEY_ENV"),
+            ),
+        )
+
+        for profile_name, url, model, key_env in endpoint_settings:
             if not url or not is_allowed_provider_url(url, allowed_hosts):
                 continue
+            profile = profile_by_name[profile_name]
             config = configured_provider(
                 profile,
                 base_url=url,
@@ -49,7 +56,8 @@ class OmniService:
             if config is None:
                 continue
             registry.register(config, OpenAICompatibleProvider(config))
-        return cls(registry)
+
+        return cls(registry, profiles)
 
     def providers(self) -> list[dict[str, object]]:
         configured = {provider.config.name: provider for provider in self.registry.enabled()}
