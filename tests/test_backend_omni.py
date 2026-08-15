@@ -14,6 +14,9 @@ def load_backend():
 
 
 class FakeService:
+    def __init__(self, health=None):
+        self._health = health
+
     def providers(self):
         return [
             {
@@ -29,7 +32,7 @@ class FakeService:
         ]
 
     def health(self):
-        return [
+        return self._health if self._health is not None else [
             {
                 "name": "hermes-agent",
                 "reachable": True,
@@ -56,3 +59,11 @@ def test_omni_health_reports_healthy_when_all_enabled_providers_are_reachable(mo
     payload = backend.omni_health()
     assert payload["status"] == "ok"
     assert payload["providers"][0]["reachable"] is True
+
+
+def test_omni_health_reports_unconfigured_without_providers(monkeypatch):
+    backend = load_backend()
+    monkeypatch.setattr(backend, "get_omni_service", lambda: FakeService(health=[]))
+
+    payload = backend.omni_health()
+    assert payload["status"] == "unconfigured"
