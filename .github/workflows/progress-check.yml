@@ -30,6 +30,9 @@ jobs:
       - name: Run full test suite
         run: pytest -q tests
 
+      - name: Run PROJECT-NAS doctor
+        run: python runtime/doctor.py || test $? -eq 1
+
       - name: Run progress reporter
         run: |
           python runtime/progress.py --commits 5 > progress.json
