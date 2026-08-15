@@ -13,12 +13,18 @@ _PROFILES = (
         default_base_url="http://127.0.0.1:11434/v1",
     ),
     ProviderProfile(
-        name="hermes-agent",
-        display_name="Hermes Agent",
+        name="custom-openai-compatible",
+        display_name="Custom OpenAI-Compatible Endpoint",
         kind=ProviderKind.OPENAI_COMPATIBLE,
         status=ProviderStatus.SUPPORTED,
-        description="Hermes Agent API server exposing an OpenAI-compatible endpoint.",
-        default_base_url="http://127.0.0.1:8642/v1",
+        description="Generic adapter for a verified OpenAI-compatible server, including a separately operated Hermes API server.",
+    ),
+    ProviderProfile(
+        name="hermes-agent",
+        display_name="Hermes Agent - Android",
+        kind=ProviderKind.DEVICE_AGENT,
+        status=ProviderStatus.OPTIONAL,
+        description="Android agent with terminal, code execution, memory, and beta PC companion; no direct PROJECT-NAS API is assumed.",
     ),
     ProviderProfile(
         name="codex-mobile",
