@@ -5,6 +5,7 @@ from typing import Sequence
 
 from .catalog import configured_provider, default_catalog
 from .openai_compatible import OpenAICompatibleProvider
+from .policy import ActionRisk, Capability, PolicyEngine, PolicyRequest
 from .providers import Message, ProviderRegistry
 from .security import is_allowed_provider_url, redact_provider_metadata
 
@@ -12,9 +13,10 @@ from .security import is_allowed_provider_url, redact_provider_metadata
 class OmniService:
     """Build and expose only explicitly configured, policy-approved providers."""
 
-    def __init__(self, registry: ProviderRegistry, profiles=None) -> None:
+    def __init__(self, registry: ProviderRegistry, profiles=None, policy: PolicyEngine | None = None) -> None:
         self.registry = registry
         self.profiles = tuple(profiles or default_catalog())
+        self.policy = policy or PolicyEngine()
 
     @classmethod
     def from_environment(cls) -> "OmniService":
@@ -91,6 +93,15 @@ class OmniService:
         ]
 
     def chat(self, provider_name: str, messages: Sequence[Message]):
+        decision = self.policy.evaluate(
+            PolicyRequest(
+                action="provider.chat",
+                capability=Capability.PROVIDER_CHAT,
+                risk=ActionRisk.LOW,
+            )
+        )
+        if not decision.allowed:
+            raise PermissionError(decision.reason)
         provider = self.registry.get(provider_name)
         if provider is None:
             raise KeyError(f"provider not configured: {provider_name}")
