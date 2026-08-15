@@ -1,4 +1,4 @@
-"""PROJECT-NAS Omni provider and device bridge primitives."""
+"""PROJECT-NAS Omni provider, policy, and device bridge primitives."""
 
 from .models import (
     ChatResult,
@@ -7,11 +7,17 @@ from .models import (
     ProviderKind,
     ProviderProfile,
 )
+from .policy import ActionRisk, Capability, PolicyDecision, PolicyEngine, PolicyRequest
 from .providers import AIProvider, ProviderRegistry
 
 __all__ = [
     "AIProvider",
+    "ActionRisk",
+    "Capability",
     "ChatResult",
+    "PolicyDecision",
+    "PolicyEngine",
+    "PolicyRequest",
     "ProviderConfig",
     "ProviderHealth",
     "ProviderKind",
