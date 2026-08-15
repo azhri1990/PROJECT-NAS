@@ -6,6 +6,8 @@ import sqlite3
 import subprocess
 from typing import Any, Dict
 
+from runtime.omni.service import OmniService
+
 app = FastAPI(title="PROJECT-NAS Local Backend")
 
 
@@ -86,6 +88,11 @@ def validate_plugin_name(plugin_name: str) -> str:
     return plugin_name
 
 
+def get_omni_service() -> OmniService:
+    """Create the provider registry from current environment configuration."""
+    return OmniService.from_environment()
+
+
 @app.get("/prompt")
 async def get_prompt():
     return load_prompt()
@@ -94,6 +101,21 @@ async def get_prompt():
 @app.get("/progress")
 async def progress(commits: int = 10):
     return run_git_info(commits)
+
+
+@app.get("/omni/providers")
+async def omni_providers():
+    return {"providers": get_omni_service().providers()}
+
+
+@app.get("/omni/health")
+async def omni_health():
+    service = get_omni_service()
+    health = service.health()
+    return {
+        "status": "ok" if all(item["reachable"] for item in health) else "degraded",
+        "providers": health,
+    }
 
 
 @app.get("/todos")
