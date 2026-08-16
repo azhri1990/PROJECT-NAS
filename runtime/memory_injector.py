@@ -1,9 +1,14 @@
 import os
+import sqlite3
 import uuid
 
-import chromadb
 import requests
 from flask import Flask, jsonify, request
+
+try:
+    import chromadb
+except ImportError:  # Android/Termux-friendly fallback
+    chromadb = None
 
 app = Flask(__name__)
 
@@ -13,12 +18,67 @@ DB_PATH = os.environ.get("PROJECT_NAS_MEMORY_DB", os.path.join(BASE_DIR, "claude
 OLLAMA_URL = os.environ.get("PROJECT_NAS_OLLAMA_URL", "http://localhost:11434/api/generate")
 MODEL_NAME = os.environ.get("PROJECT_NAS_OLLAMA_MODEL", "llama3.2:3b")
 
-client = chromadb.PersistentClient(path=DB_PATH)
-collection = client.get_or_create_collection(name="project_nas_memory")
+
+class SQLiteMemoryCollection:
+    """Small built-in memory adapter for platforms where ChromaDB cannot install."""
+
+    def __init__(self, path):
+        if os.path.splitext(path)[1]:
+            db_file = path
+            parent = os.path.dirname(path)
+        else:
+            parent = path
+            db_file = os.path.join(path, "memory.sqlite3")
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self.db_file = db_file
+        with sqlite3.connect(self.db_file) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS memories ("
+                "id TEXT PRIMARY KEY, document TEXT NOT NULL, metadata TEXT)"
+            )
+            conn.commit()
+
+    def query(self, query_texts, n_results=3):
+        query = (query_texts or [""])[0].strip()
+        with sqlite3.connect(self.db_file) as conn:
+            if query:
+                rows = conn.execute(
+                    "SELECT document FROM memories WHERE document LIKE ? "
+                    "ORDER BY rowid DESC LIMIT ?",
+                    (f"%{query}%", n_results),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT document FROM memories ORDER BY rowid DESC LIMIT ?",
+                    (n_results,),
+                ).fetchall()
+        return {"documents": [[row[0] for row in rows]]}
+
+    def add(self, documents, metadatas=None, ids=None):
+        documents = documents or []
+        ids = ids or [f"mem_{uuid.uuid4()}" for _ in documents]
+        metadatas = metadatas or [{} for _ in documents]
+        with sqlite3.connect(self.db_file) as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO memories (id, document, metadata) VALUES (?, ?, ?)",
+                [(item_id, document, str(metadata))
+                 for item_id, document, metadata in zip(ids, documents, metadatas)],
+            )
+            conn.commit()
+
+
+if chromadb is not None:
+    client = chromadb.PersistentClient(path=DB_PATH)
+    collection = client.get_or_create_collection(name="project_nas_memory")
+    MEMORY_BACKEND = "chromadb"
+else:
+    collection = SQLiteMemoryCollection(DB_PATH)
+    MEMORY_BACKEND = "sqlite"
 
 
 def retrieve_context(query_text):
-    """Search the vector DB for relevant past memories."""
+    """Search the configured memory backend for relevant past memories."""
     try:
         results = collection.query(query_texts=[query_text], n_results=3)
     except Exception as exc:
@@ -36,7 +96,12 @@ def retrieve_context(query_text):
 @app.route("/health", methods=["GET"])
 def health():
     """Expose local service configuration without leaking memory contents."""
-    return jsonify({"status": "ok", "model": MODEL_NAME, "ollama_url": OLLAMA_URL})
+    return jsonify({
+        "status": "ok",
+        "model": MODEL_NAME,
+        "ollama_url": OLLAMA_URL,
+        "memory_backend": MEMORY_BACKEND,
+    })
 
 
 @app.route("/chat", methods=["POST"])
@@ -53,8 +118,6 @@ def chat():
     if not isinstance(static_context, str):
         return jsonify({"error": "'context' must be a string."}), 400
 
-    # Short prompts are valid; the model, not the transport layer, should decide
-    # whether more context is useful. This keeps the API predictable for agents.
     memory_context = retrieve_context(user_prompt)
     full_prompt = (
         f"{static_context}\n{memory_context}\n"
