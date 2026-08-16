@@ -17,6 +17,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("PROJECT_NAS_MEMORY_DB", os.path.join(BASE_DIR, "claude-mem-db"))
 OLLAMA_URL = os.environ.get("PROJECT_NAS_OLLAMA_URL", "http://localhost:11434/api/generate")
 MODEL_NAME = os.environ.get("PROJECT_NAS_OLLAMA_MODEL", "llama3.2:3b")
+OLLAMA_TIMEOUT = float(os.environ.get("PROJECT_NAS_OLLAMA_TIMEOUT", "75"))
+MEMORY_LIMIT = int(os.environ.get("PROJECT_NAS_MEMORY_LIMIT", "2"))
+MAX_MEMORY_CHARS = int(os.environ.get("PROJECT_NAS_MAX_MEMORY_CHARS", "3000"))
 
 
 class SQLiteMemoryCollection:
@@ -39,7 +42,7 @@ class SQLiteMemoryCollection:
             )
             conn.commit()
 
-    def query(self, query_texts, n_results=3):
+    def query(self, query_texts, n_results=MEMORY_LIMIT):
         query = (query_texts or [""])[0].strip()
         with sqlite3.connect(self.db_file) as conn:
             if query:
@@ -85,9 +88,12 @@ def retrieve_context(query_text):
         print(f"Warning: memory retrieval failed: {exc}")
         return ""
     if results and results.get("documents") and results["documents"][0]:
+        memories = results["documents"][0]
+        text = "\n".join(memories)
+        text = text[:MAX_MEMORY_CHARS]
         return (
             "\n--- INJECTED MEMORY ---\n"
-            + "\n".join(results["documents"][0])
+            + text
             + "\n--- END MEMORY ---\n"
         )
     return ""
@@ -119,17 +125,34 @@ def chat():
         return jsonify({"error": "'context' must be a string."}), 400
 
     memory_context = retrieve_context(user_prompt)
-    full_prompt = (
-        f"{static_context}\n{memory_context}\n"
-        f"[USER INPUT]: {user_prompt}\n"
-        f"[SYSTEM INSTRUCTION]: You are the Omni-Coach. Answer directly, "
-        f"apply the 80/20 rule, and give the brutal truth."
+
+    system_instruction = (
+        "You are PROJECT-NAS local AI. "
+        "Answer the user's request directly and concisely. "
+        "Follow exact-output requests literally. "
+        "Do not add commentary when the user requests an exact response. "
+        "Prioritize reliability and brevity on mobile."
     )
 
-    payload = {"model": MODEL_NAME, "prompt": full_prompt, "stream": False}
+    full_prompt = (
+        f"[SYSTEM INSTRUCTION]: {system_instruction}\n"
+        f"{static_context}\n"
+        f"{memory_context}\n"
+        f"[USER INPUT]: {user_prompt}"
+    )
+
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": full_prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 128,
+        },
+    }
 
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=60)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
         response.raise_for_status()
         ai_response = response.json().get("response")
         if not isinstance(ai_response, str):
