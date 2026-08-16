@@ -24,21 +24,6 @@ def test_session_db_is_configurable(tmp_path, monkeypatch):
     assert backend.resolve_session_db() == str(db_path)
 
 
-def test_plugin_name_must_be_a_simple_filename(tmp_path):
-    backend = load_backend()
-    backend.PLUGIN_DIR = str(tmp_path)
-
-    assert backend.validate_plugin_name("safe_plugin") == "safe_plugin"
-
-    for name in ("../escape", "..\\escape", "/absolute", "a/b", "a\\b"):
-        try:
-            backend.validate_plugin_name(name)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"unsafe plugin name accepted: {name}")
-
-
 def test_tool_endpoint_allows_repo_progress(monkeypatch):
     backend = load_backend()
     monkeypatch.setattr(
@@ -65,3 +50,18 @@ def test_tool_endpoint_rejects_unknown_or_process_tool():
 
     process = client.post("/tools/shell.run", json={"command": "whoami"})
     assert process.status_code == 404
+
+def test_custom_plugin_execution_is_disabled(tmp_path):
+    backend = load_backend()
+    backend.PLUGIN_DIR = str(tmp_path)
+
+    (tmp_path / "test_plugin.py").write_text(
+        "def handle(payload):\n"
+        "    return {'executed': True}\n",
+        encoding="utf-8",
+    )
+
+    client = TestClient(backend.app)
+    response = client.post("/custom/test_plugin", json={})
+
+    assert response.status_code in (404, 405, 410)

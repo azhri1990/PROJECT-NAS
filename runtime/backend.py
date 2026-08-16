@@ -1,6 +1,4 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-import importlib.util
 import os
 import sqlite3
 import subprocess
@@ -26,8 +24,6 @@ PROMPT_PATHS = [
     os.path.join(os.path.dirname(__file__), "..", "ai", "AI_OPERATING_SYSTEM_SUMMARY.md"),
 ]
 
-PLUGIN_DIR = os.path.join(os.path.dirname(__file__), "plugins")
-os.makedirs(PLUGIN_DIR, exist_ok=True)
 
 
 def load_prompt() -> Dict[str, Any]:
@@ -82,13 +78,6 @@ def get_db_conn():
     )
     conn.commit()
     return conn
-
-
-def validate_plugin_name(plugin_name: str) -> str:
-    """Allow only Python identifier-style plugin module names."""
-    if not plugin_name or not plugin_name.isidentifier():
-        raise ValueError("invalid plugin name")
-    return plugin_name
 
 
 @app.get("/prompt")
@@ -180,31 +169,6 @@ async def update_todo(todo_id: str, item: Dict[str, Any]):
     finally:
         conn.close()
     return {"updated": True, "id": todo_id}
-
-
-@app.post("/custom/{plugin_name}")
-async def run_custom(plugin_name: str, payload: Dict[str, Any]):
-    try:
-        safe_name = validate_plugin_name(plugin_name)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    plugin_path = os.path.join(PLUGIN_DIR, f"{safe_name}.py")
-    if not os.path.isfile(plugin_path):
-        raise HTTPException(status_code=404, detail="plugin not found")
-
-    spec = importlib.util.spec_from_file_location(safe_name, plugin_path)
-    if spec is None or spec.loader is None:
-        raise HTTPException(status_code=500, detail="plugin could not be loaded")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    if not hasattr(module, "handle"):
-        raise HTTPException(status_code=400, detail="plugin must implement handle(payload)")
-    try:
-        result = module.handle(payload)
-        return JSONResponse(content={"result": result})
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/")
