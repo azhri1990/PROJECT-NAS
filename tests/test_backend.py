@@ -1,6 +1,8 @@
 import importlib.util
 import sys
 
+from fastapi.testclient import TestClient
+
 
 BACKEND_PATH = "runtime/backend.py"
 
@@ -35,3 +37,31 @@ def test_plugin_name_must_be_a_simple_filename(tmp_path):
             pass
         else:
             raise AssertionError(f"unsafe plugin name accepted: {name}")
+
+
+def test_tool_endpoint_allows_repo_progress(monkeypatch):
+    backend = load_backend()
+    monkeypatch.setattr(
+        backend,
+        "run_git_info",
+        lambda commits: {"branch": "test", "status_porcelain": "", "recent_commits": ["one"][:commits]},
+    )
+    backend.TOOL_GATEWAY = backend.build_default_gateway(backend.run_git_info)
+    client = TestClient(backend.app)
+
+    response = client.post("/tools/repo.progress", json={"commits": 1})
+
+    assert response.status_code == 200
+    assert response.json()["branch"] == "test"
+    assert response.json()["recent_commits"] == ["one"]
+
+
+def test_tool_endpoint_rejects_unknown_or_process_tool():
+    backend = load_backend()
+    client = TestClient(backend.app)
+
+    unknown = client.post("/tools/missing", json={})
+    assert unknown.status_code == 404
+
+    process = client.post("/tools/shell.run", json={"command": "whoami"})
+    assert process.status_code == 404
