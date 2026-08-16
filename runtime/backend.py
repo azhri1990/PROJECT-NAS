@@ -6,6 +6,8 @@ import sqlite3
 import subprocess
 from typing import Any, Dict
 
+from runtime.tool_gateway import build_default_gateway
+
 app = FastAPI(title="PROJECT-NAS Local Backend")
 
 
@@ -59,6 +61,9 @@ def run_git_info(commits: int = 10) -> Dict[str, Any]:
     return {"branch": branch, "status_porcelain": status, "recent_commits": recent}
 
 
+TOOL_GATEWAY = build_default_gateway(run_git_info)
+
+
 def get_db_conn():
     db_path = resolve_session_db()
     parent = os.path.dirname(db_path)
@@ -94,6 +99,20 @@ async def get_prompt():
 @app.get("/progress")
 async def progress(commits: int = 10):
     return run_git_info(commits)
+
+
+@app.post("/tools/{tool_name}")
+async def execute_tool(tool_name: str, payload: Dict[str, Any]):
+    try:
+        return TOOL_GATEWAY.execute(tool_name, payload)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="tool not found")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
 
 
 @app.get("/todos")
