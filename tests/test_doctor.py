@@ -35,3 +35,33 @@ def test_doctor_reports_unreachable_ollama_without_crashing(monkeypatch):
     result = doctor.check_ollama()
     assert not result.ok
     assert "unreachable" in result.detail
+
+
+def test_doctor_accepts_sqlite_memory_fallback(monkeypatch):
+    doctor = load_doctor()
+
+    monkeypatch.setattr(
+        doctor.importlib.util,
+        "find_spec",
+        lambda name: None if name == "chromadb" else object(),
+    )
+
+    result = doctor.check_memory_backend()
+
+    assert result.ok
+    assert "SQLite fallback" in result.detail
+
+
+def test_doctor_accepts_chromadb_when_available(monkeypatch):
+    doctor = load_doctor()
+
+    monkeypatch.setattr(
+        doctor.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "chromadb" else None,
+    )
+
+    result = doctor.check_memory_backend()
+
+    assert result.ok
+    assert result.detail == "ChromaDB available"

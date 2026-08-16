@@ -1,5 +1,5 @@
 fastapi>=0.115,<1
-uvicorn[standard]>=0.30,<1
+uvicorn>=0.30,<1
 flask>=3.0,<4
 requests>=2.31,<3
 # ChromaDB is intentionally omitted: runtime/memory_injector.py uses SQLite on Termux/Android.

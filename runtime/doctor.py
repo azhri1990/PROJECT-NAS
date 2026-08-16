@@ -61,7 +61,25 @@ def check_repository() -> Check:
 
 
 def check_module(name: str) -> Check:
-    return Check(name, importlib.util.find_spec(name) is not None, "importable" if importlib.util.find_spec(name) else "not installed")
+    available = importlib.util.find_spec(name) is not None
+    return Check(name, available, "importable" if available else "not installed")
+
+
+def check_memory_backend() -> Check:
+    """Verify that a usable local memory backend is available.
+
+    ChromaDB is optional. SQLite is the required zero-dependency fallback
+    used by the Android/Termux runtime.
+    """
+    if importlib.util.find_spec("chromadb") is not None:
+        return Check("Memory backend", True, "ChromaDB available")
+
+    try:
+        with sqlite3.connect(":memory:") as conn:
+            conn.execute("SELECT 1")
+        return Check("Memory backend", True, "SQLite fallback available")
+    except (OSError, sqlite3.Error) as exc:
+        return Check("Memory backend", False, f"no usable backend: {exc}")
 
 
 def check_database() -> Check:
@@ -104,7 +122,7 @@ def run() -> int:
         check_git(),
         check_module("fastapi"),
         check_module("requests"),
-        check_module("chromadb"),
+        check_memory_backend(),
         check_database(),
         check_prompt(),
         check_ollama(),
