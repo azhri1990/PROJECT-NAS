@@ -95,3 +95,38 @@ def test_progress_validator_rejects_arbitrary_git_arguments():
     for payload in ({"command": "git reset --hard"}, {"commits": 0}, {"commits": 51}):
         with pytest.raises(ValueError):
             gateway.execute("repo.progress", payload)
+
+def test_write_repository_is_denied_by_default():
+    gateway = ToolGateway()
+    gateway.register(
+        ToolSpec(
+            name="todo.create",
+            capability=Capability.WRITE_REPOSITORY,
+            risk=RiskLevel.MEDIUM,
+            input_validator=identity,
+            handler=lambda payload: payload,
+        )
+    )
+
+    with pytest.raises(PermissionError, match="write_repository"):
+        gateway.execute("todo.create", {"id": "x", "title": "blocked"})
+
+    assert gateway.audit_log[-1]["allowed"] is False
+
+
+def test_network_access_is_denied_by_default():
+    gateway = ToolGateway()
+    gateway.register(
+        ToolSpec(
+            name="network.call",
+            capability=Capability.NETWORK_ACCESS,
+            risk=RiskLevel.HIGH,
+            input_validator=identity,
+            handler=lambda payload: payload,
+        )
+    )
+
+    with pytest.raises(PermissionError, match="network_access"):
+        gateway.execute("network.call", {"url": "http://example.invalid"})
+
+    assert gateway.audit_log[-1]["allowed"] is False
