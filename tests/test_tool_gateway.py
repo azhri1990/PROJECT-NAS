@@ -3,7 +3,7 @@ import time
 import pytest
 
 from runtime.policy import Capability, RiskLevel
-from runtime.tool_gateway import ToolGateway, ToolSpec
+from runtime.tool_gateway import ToolGateway, ToolSpec, build_default_gateway
 
 
 def identity(payload):
@@ -82,3 +82,16 @@ def test_timeout_raises_without_returning_handler_result():
     )
     with pytest.raises(TimeoutError, match="tool timed out: slow"):
         gateway.execute("slow", {})
+
+
+def test_default_gateway_exposes_only_bounded_repository_progress():
+    gateway = build_default_gateway(lambda commits: {"recent_commits": list(range(commits))})
+    result = gateway.execute("repo.progress", {"commits": 2})
+    assert result == {"recent_commits": [0, 1]}
+
+
+def test_progress_validator_rejects_arbitrary_git_arguments():
+    gateway = build_default_gateway(lambda commits: {"recent_commits": list(range(commits))})
+    for payload in ({"command": "git reset --hard"}, {"commits": 0}, {"commits": 51}):
+        with pytest.raises(ValueError):
+            gateway.execute("repo.progress", payload)
