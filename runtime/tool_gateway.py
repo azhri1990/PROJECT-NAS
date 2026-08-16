@@ -91,9 +91,12 @@ def _validate_progress(payload: dict) -> dict:
     return {"commits": commits}
 
 
-def build_default_gateway() -> ToolGateway:
+def build_default_gateway(progress_handler: Callable[[int], dict] | None = None) -> ToolGateway:
     """Create the v1 gateway with only the bounded repository-progress read tool."""
-    from runtime.backend import run_git_info
+    if progress_handler is None:
+        from runtime.backend import run_git_info
+
+        progress_handler = run_git_info
 
     gateway = ToolGateway()
     gateway.register(
@@ -102,7 +105,7 @@ def build_default_gateway() -> ToolGateway:
             capability=Capability.READ_REPOSITORY,
             risk=RiskLevel.LOW,
             input_validator=_validate_progress,
-            handler=lambda payload: run_git_info(payload["commits"]),
+            handler=lambda payload: progress_handler(payload["commits"]),
         )
     )
     return gateway
