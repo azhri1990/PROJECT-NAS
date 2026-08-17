@@ -9,21 +9,37 @@ import subprocess
 from datetime import datetime, timezone
 
 
-def run_git(cmd_args):
+def _git_output(args):
     try:
         return subprocess.check_output(
-            ["git"] + cmd_args, stderr=subprocess.DEVNULL, text=True
+            ["git", *args], stderr=subprocess.DEVNULL, text=True
         ).strip()
     except (OSError, subprocess.CalledProcessError):
         return None
 
 
+def _git_branch():
+    return _git_output(["rev-parse", "--abbrev-ref", "HEAD"])
+
+
+def _git_status():
+    return _git_output(["status", "--porcelain", "--branch"])
+
+
+def _git_recent_commits(commits):
+    if not 0 <= commits <= 50:
+        raise ValueError("commits must be between 0 and 50")
+    if commits == 0:
+        return ""
+    return _git_output(["log", "--oneline", "-n", str(commits)])
+
+
 def get_repo_info(commits=10):
     if commits < 0:
         raise ValueError("commits must be non-negative")
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"])
-    status = run_git(["status", "--porcelain", "--branch"])
-    log = run_git(["log", "--oneline", "-n", str(commits)]) if commits else ""
+    branch = _git_branch()
+    status = _git_status()
+    log = _git_recent_commits(commits)
     return {
         "branch": branch or "unknown",
         "status_porcelain": status or "",
