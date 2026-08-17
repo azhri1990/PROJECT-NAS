@@ -1,0 +1,1 @@
+Do not claim operational green from unit tests alone. Automated CI lifecycle smoke and real-device Termux/Ollama smoke are separate gates. Both must pass.
