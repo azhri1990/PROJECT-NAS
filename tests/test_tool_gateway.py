@@ -2,12 +2,21 @@ import time
 
 import pytest
 
+from runtime.audit import AuditLog
 from runtime.policy import Capability, RiskLevel
 from runtime.tool_gateway import ToolGateway, ToolSpec, build_default_gateway
 
 
 def identity(payload):
     return payload
+
+
+def test_audit_log_is_bounded_and_keeps_latest_events():
+    log = AuditLog(limit=2)
+    log.record("a", True, "ok")
+    log.record("b", False, "denied")
+    log.record("c", True, "ok")
+    assert [event["tool"] for event in log.snapshot()] == ["b", "c"]
 
 
 def test_registered_read_tool_executes_after_policy_check():
