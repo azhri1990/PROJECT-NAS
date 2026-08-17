@@ -10,11 +10,6 @@ env:
   PYTHONDONTWRITEBYTECODE: "1"
   PROJECT_NAS_DOCTOR_OFFLINE: "1"
 
-env:
-  PYTHONPATH: ${{ github.workspace }}
-  PYTHONDONTWRITEBYTECODE: "1"
-  PROJECT_NAS_DOCTOR_OFFLINE: "1"
-
 jobs:
   progress-check:
     runs-on: ubuntu-24.04
