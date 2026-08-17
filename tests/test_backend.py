@@ -146,3 +146,41 @@ def test_http_error_mapping(monkeypatch):
     assert client.post("/tools/blocked.tool", json={}).status_code == 403
     assert client.post("/tools/bad.tool", json={}).status_code == 400
     assert client.post("/tools/slow.tool", json={}).status_code == 504
+
+
+def test_todo_create_rejects_unsupported_fields_and_invalid_status():
+    backend = load_backend()
+    client = TestClient(backend.app)
+    assert client.post("/todos", json={"id": "1", "title": "x", "extra": "nope"}).status_code == 400
+    assert client.post("/todos", json={"id": "2", "title": "x", "status": "running"}).status_code == 400
+
+
+def test_todo_create_bounds_text_fields(tmp_path, monkeypatch):
+    db_path = tmp_path / "session.db"
+    monkeypatch.setenv("PROJECT_NAS_SESSION_DB", str(db_path))
+    backend = load_backend()
+    client = TestClient(backend.app)
+    response = client.post("/todos", json={"id": "1", "title": "x" * (backend.MAX_TODO_TITLE_CHARS + 1)})
+    assert response.status_code == 413
+
+
+def test_todo_update_requires_supported_nonempty_payload(tmp_path, monkeypatch):
+    db_path = tmp_path / "session.db"
+    monkeypatch.setenv("PROJECT_NAS_SESSION_DB", str(db_path))
+    backend = load_backend()
+    client = TestClient(backend.app)
+    assert client.put("/todos/missing", json={}).status_code == 400
+    assert client.put("/todos/missing", json={"extra": "nope"}).status_code == 400
+
+
+def test_todo_lifecycle_accepts_only_governed_values(tmp_path, monkeypatch):
+    db_path = tmp_path / "session.db"
+    monkeypatch.setenv("PROJECT_NAS_SESSION_DB", str(db_path))
+    backend = load_backend()
+    client = TestClient(backend.app)
+    created = client.post("/todos", json={"id": "todo-1", "title": "Ship runtime", "status": "pending"})
+    assert created.status_code == 200
+    updated = client.put("/todos/todo-1", json={"status": "completed"})
+    assert updated.status_code == 200
+    todos = client.get("/todos").json()["todos"]
+    assert todos[0]["status"] == "completed"
