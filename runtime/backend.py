@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
 from runtime.git_reader import get_repo_info
+from runtime.orchestrator import IntentRouter
 from runtime.tool_gateway import build_default_gateway
 
 app = FastAPI(title="PROJECT-NAS Local Backend")
@@ -17,6 +18,7 @@ MAX_TODO_ID_CHARS = 128
 MAX_TODO_TITLE_CHARS = 500
 MAX_TODO_DESCRIPTION_CHARS = 4000
 MAX_TODO_STATUS_CHARS = 64
+MAX_INTENT_CHARS = 64
 MAX_CHAT_PROMPT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_PROMPT_CHARS", "12000"))
 MAX_CHAT_CONTEXT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_CONTEXT_CHARS", "12000"))
 MAX_CHAT_RESPONSE_CHARS = int(os.environ.get("PROJECT_NAS_MAX_RESPONSE_CHARS", "12000"))
@@ -254,6 +256,7 @@ def _call_chat_worker(prompt: str, context: str) -> dict[str, Any]:
 
 
 TOOL_GATEWAY = build_default_gateway(run_git_info)
+INTENT_ROUTER = IntentRouter(TOOL_GATEWAY)
 
 
 def get_db_conn():
@@ -300,6 +303,21 @@ async def chat(payload: Dict[str, Any]):
 @app.get("/progress")
 async def progress(commits: int = 10):
     return TOOL_GATEWAY.execute("status.progress", {"commits": commits})
+
+
+@app.post("/intent/{intent}")
+async def execute_intent(intent: str, payload: Dict[str, Any]):
+    bounded_intent = _bounded_text(intent, "intent", MAX_INTENT_CHARS, required=True)
+    try:
+        return INTENT_ROUTER.handle(bounded_intent, payload)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail="intent tool not found")
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
 
 
 @app.post("/tools/{tool_name}")
