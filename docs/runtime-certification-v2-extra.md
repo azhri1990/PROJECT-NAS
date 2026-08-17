@@ -1,0 +1,1 @@
+Automated runtime smoke proves lifecycle deterministically with loopback-only mocks. It does not replace the final real Termux/Ollama test. The project remains $0/local-first.
