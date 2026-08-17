@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from runtime.audit import AuditLog
 from runtime.policy import Capability, PolicyEngine, RiskLevel, ToolRequest
 
 MAX_MEMORY_LIMIT = 20
@@ -31,8 +32,7 @@ class ToolGateway:
             raise ValueError("audit_limit must be positive")
         self.policy = policy or PolicyEngine()
         self._tools: dict[str, ToolSpec] = {}
-        self.audit_log: list[dict[str, Any]] = []
-        self._audit_limit = audit_limit
+        self.audit_log = AuditLog(audit_limit)
 
     def register(self, spec: ToolSpec) -> None:
         if not spec.name or spec.name in self._tools:
@@ -84,9 +84,7 @@ class ToolGateway:
             return result
 
     def _record_audit(self, name: str, allowed: bool, reason: str) -> None:
-        self.audit_log.append({"tool": name, "allowed": allowed, "reason": reason})
-        if len(self.audit_log) > self._audit_limit:
-            del self.audit_log[: len(self.audit_log) - self._audit_limit]
+        self.audit_log.record(name, allowed, reason)
 
 
 def _require_object(payload: dict) -> dict:
