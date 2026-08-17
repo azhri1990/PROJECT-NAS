@@ -65,7 +65,7 @@ runtime/project-nas.sh chat
 
 ## Control plane
 
-The FastAPI backend exposes a bounded tool gateway. The default gateway is intentionally read-only:
+The FastAPI backend exposes a bounded, read-only tool gateway:
 
 | Tool | Purpose |
 |---|---|
@@ -74,7 +74,22 @@ The FastAPI backend exposes a bounded tool gateway. The default gateway is inten
 | `prompt.get` | Bounded canonical prompt retrieval |
 | `memory.read` | Bounded memory retrieval |
 
+HTTP surfaces are:
+
+- `GET /health` — aggregate runtime health;
+- `GET /prompt` — bounded canonical prompt;
+- `GET /progress?commits=N` — bounded repository progress;
+- `POST /tools/{tool_name}` — policy-gated control-plane execution.
+
 The policy engine denies process execution, arbitrary network access, and repository writes by default.
+
+## Chat, model fallback, and memory governance
+
+`/chat` uses the configured local model first. If Ollama reports that model is unavailable, PROJECT-NAS discovers models from the **local loopback** Ollama `/api/tags` endpoint and selects a deterministic fallback. No remote model endpoint is permitted.
+
+Chat input, static context, retrieved memory, and model responses have explicit size limits. A deterministic total prompt budget reserves the system/runtime contract and user request before allocating remaining space between static context and retrieved memory.
+
+Memory persistence is opt-in: ordinary chat is not stored. Explicit memory requests are redacted for common API keys, bearer tokens, passwords, and private-key material before persistence. SQLite retention is bounded by `PROJECT_NAS_MAX_PERSISTED_MEMORIES`; read APIs remain independently bounded.
 
 ## Testing
 
@@ -91,9 +106,10 @@ bash -n runtime/project-nas.sh
 python -m compileall -q runtime tests
 git diff --check
 python runtime/doctor.py
+python runtime/progress.py --commits 5
 ```
 
-CI performs the same core checks and fails on doctor errors rather than silently continuing.
+CI performs the same core checks in a Python 3.12 container, installs Git for repository inspection, and fails on doctor errors rather than silently continuing.
 
 ## Configuration
 
@@ -109,16 +125,15 @@ Important environment variables include:
 - `PROJECT_NAS_MAX_PROMPT_CHARS`
 - `PROJECT_NAS_MAX_CONTEXT_CHARS`
 - `PROJECT_NAS_MAX_RESPONSE_CHARS`
+- `PROJECT_NAS_MAX_TOTAL_PROMPT_CHARS`
+- `PROJECT_NAS_MAX_PERSISTED_MEMORIES`
 
-## Roadmap gates
+## Remaining roadmap gates
 
-Before autonomous plugins, remote-device control, or unrestricted process execution are enabled, PROJECT-NAS must have:
+Before autonomous plugins, remote-device control, or unrestricted process execution are enabled, PROJECT-NAS still requires:
 
-- end-to-end `/chat` tests with an isolated fake local model endpoint;
-- deterministic model discovery and fallback routing;
-- context budgeting/compression;
-- explicit memory retention and redaction policy;
 - repository-wide security review;
-- approval and verification gates for every write/process/network capability.
+- explicit approval and verification gates for every write/process/network capability;
+- dedicated integration tests for any future privileged capability.
 
-These are engineering gates, not assumptions that the capability already exists.
+These are future capability gates, not assumptions that those capabilities already exist.
