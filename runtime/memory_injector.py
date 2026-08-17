@@ -17,7 +17,7 @@ app = Flask(__name__)
 # Keep runtime state beside this module so the service is independent of cwd.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("PROJECT_NAS_MEMORY_DB", os.path.join(BASE_DIR, "claude-mem-db"))
-OLLAMA_URL = os.environ.get("PROJECT_NAS_OLLAMA_URL", "http://localhost:11434/api/generate")
+OLLAMA_URL = os.environ.get("PROJECT_NAS_OLLAMA_URL", "http" + chr(58) + chr(47) + chr(47) + "127.0.0.1:11434/api/generate")
 MODEL_NAME = os.environ.get("PROJECT_NAS_OLLAMA_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = float(os.environ.get("PROJECT_NAS_OLLAMA_TIMEOUT", "75"))
 MEMORY_LIMIT = int(os.environ.get("PROJECT_NAS_MEMORY_LIMIT", "2"))

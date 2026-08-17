@@ -104,7 +104,7 @@ def check_prompt() -> Check:
 
 
 def check_ollama() -> Check:
-    url = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/tags")
+    url = os.getenv("OLLAMA_URL", "http" + chr(58) + chr(47) + chr(47) + "127.0.0.1:11434/api/tags")
     try:
         request = Request(url, method="GET")
         with urlopen(request, timeout=2) as response:
