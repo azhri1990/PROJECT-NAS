@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Create isolated Python environment
         run: |
@@ -50,7 +50,11 @@ jobs:
 
           payload = json.loads(Path("progress.json").read_text(encoding="utf-8"))
           repo = payload["repo"]
-          assert repo["branch"] == os.environ["GITHUB_REF_NAME"]
+          event = os.environ.get("GITHUB_EVENT_NAME")
+          if event == "pull_request":
+              assert repo["branch"] == "HEAD"
+          else:
+              assert repo["branch"] == os.environ["GITHUB_REF_NAME"]
           assert repo["recent_commits"]
-          print(f"CI progress check OK: branch={repo['branch']}, commits={len(repo['recent_commits'])}")
+          print(f"CI progress check OK: event={event}, branch={repo['branch']}, commits={len(repo['recent_commits'])}")
           PY
