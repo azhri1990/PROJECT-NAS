@@ -1,39 +1,48 @@
-import runtime.memory_injector as memory_injector
+import runtime.tool_gateway as tool_gateway
+from runtime.policy import Capability, RiskLevel
 
 
-def test_read_memories_bounds_total_context(monkeypatch):
-    class FakeCollection:
-        def read_records(self, query=None, limit=5):
-            return [
-                ("one", "A" * 3000, "{}"),
-                ("two", "B" * 3000, "{}"),
-                ("three", "C" * 3000, "{}"),
-            ][:limit]
+def test_gateway_bounds_aggregate_memory_context():
+    gateway = tool_gateway.ToolGateway()
+    gateway.register(
+        tool_gateway.ToolSpec(
+            "memory.read",
+            Capability.READ_RUNTIME,
+            RiskLevel.LOW,
+            lambda payload: payload,
+            lambda payload: {
+                "memories": [
+                    {"id": "one", "document": "A" * 3000, "metadata": {}},
+                    {"id": "two", "document": "B" * 3000, "metadata": {}},
+                    {"id": "three", "document": "C" * 3000, "metadata": {}},
+                ],
+                "count": 3,
+            },
+        )
+    )
 
-    monkeypatch.setattr(memory_injector, "MEMORY_BACKEND", "sqlite")
-    monkeypatch.setattr(memory_injector, "collection", FakeCollection())
-    monkeypatch.setattr(memory_injector, "MAX_MEMORY_CHARS", 3000)
-    monkeypatch.setattr(memory_injector, "MAX_MEMORY_TOTAL_CHARS", 6000)
+    raw = gateway.execute("memory.read", {})
+    bounded = tool_gateway._bound_memory_result(raw)
 
-    result = memory_injector.read_memories(limit=20)
-
-    assert result["count"] == 2
-    assert sum(len(item["document"]) for item in result["memories"]) <= 6000
+    assert bounded["count"] == 2
+    assert sum(len(item["document"]) for item in bounded["memories"]) == 6000
+    assert bounded["truncated"] is True
 
 
-def test_read_memories_preserves_metadata_and_ids(monkeypatch):
-    class FakeCollection:
-        def read_records(self, query=None, limit=5):
-            return [("id-1", "remember this", '{"source": "test"}')]
-
-    monkeypatch.setattr(memory_injector, "MEMORY_BACKEND", "sqlite")
-    monkeypatch.setattr(memory_injector, "collection", FakeCollection())
-
-    result = memory_injector.read_memories(query="remember", limit=1)
+def test_gateway_memory_bound_preserves_metadata_and_ids():
+    result = tool_gateway._bound_memory_result(
+        {
+            "memories": [
+                {"id": "id-1", "document": "remember this", "metadata": {"source": "test"}}
+            ],
+            "count": 1,
+        }
+    )
 
     assert result == {
         "memories": [
             {"id": "id-1", "document": "remember this", "metadata": {"source": "test"}}
         ],
         "count": 1,
+        "truncated": False,
     }
