@@ -23,7 +23,7 @@ def test_stop_reports_external_services_without_claiming_ownership(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\ncase \"$*\" in\n  *5000/health*|*11434/api/tags*) exit 0 ;;\n  *) exit 1 ;;\nesac\n")
+    fake_curl.write_text("#!/bin/sh\ncase \"$*\" in\n  *5001/health*|*5000/health*|*11434/api/tags*) exit 0 ;;\n  *) exit 1 ;;\nesac\n")
     fake_curl.chmod(0o755)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
 
