@@ -6,6 +6,7 @@ from typing import Any
 class Capability(str, Enum):
     READ_REPOSITORY = "read_repository"
     READ_RUNTIME = "read_runtime"
+    WRITE_SESSION = "write_session"
     WRITE_REPOSITORY = "write_repository"
     EXECUTE_PROCESS = "execute_process"
     NETWORK_ACCESS = "network_access"
@@ -56,5 +57,8 @@ class PolicyEngine:
                 False,
                 "high-risk action requires explicit approval",
             )
+
+        if request.capability == Capability.WRITE_SESSION:
+            return PolicyDecision(True, "allowed by bounded local session-write policy")
 
         return PolicyDecision(True, "allowed by local read-only policy")
