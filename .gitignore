@@ -28,3 +28,6 @@ Thumbs.db
 *.key
 credentials.json
 secrets.json
+
+# Runtime-generated state
+runtime/.pids/
