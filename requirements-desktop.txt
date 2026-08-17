@@ -1,0 +1,5 @@
+# Optional desktop enhancement: ChromaDB-backed semantic memory.
+# The runtime always has a zero-cost SQLite fallback, so this file is not
+# required for Termux/Android or for the core local runtime.
+-r requirements-runtime.txt
+chromadb>=1.0,<2
