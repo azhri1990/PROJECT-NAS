@@ -1,8 +1,6 @@
 name: PROJECT-NAS Progress Check
 
-on:
-  push:
-  pull_request:
+on: [push, pull_request]
 
 permissions:
   contents: read
@@ -13,51 +11,38 @@ env:
 
 jobs:
   progress-check:
-    runs-on: ubuntu-latest
-    container: python:3.12-slim
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Git and test/runtime dependencies
+      - name: Create isolated Python environment
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git
-          rm -rf /var/lib/apt/lists/*
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-test.txt
-          python -m pip install -r requirements-runtime.txt
-
-      - name: Initialize repository metadata for container checks
-        run: |
-          git init -q
-          git config user.name "PROJECT-NAS CI"
-          git config user.email "ci@project-nas.local"
-          git switch -c "${GITHUB_REF_NAME}"
-          git add -A
-
-      - name: Check repository whitespace
-        run: git diff --cached --check
-
-      - name: Compile Python sources
-        run: python -m compileall -q runtime tests
+          python3 --version
+          python3 -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --upgrade pip
+          .ci-venv/bin/python -m pip install -r requirements-test.txt
+          .ci-venv/bin/python -m pip install -r requirements-runtime.txt
 
       - name: Check shell syntax
         run: bash -n runtime/project-nas.sh
 
+      - name: Compile Python sources
+        run: .ci-venv/bin/python -m compileall -q runtime tests
+
+      - name: Check repository whitespace
+        run: git diff --check
+
       - name: Run full test suite
-        run: pytest -q tests
+        run: .ci-venv/bin/python -m pytest -q tests
 
       - name: Run PROJECT-NAS doctor diagnostics
-        run: python runtime/doctor.py
-
-      - name: Commit CI snapshot for repository readers
-        run: git commit -qm "ci: verification snapshot"
+        run: .ci-venv/bin/python runtime/doctor.py
 
       - name: Run progress reporter
         run: |
-          python runtime/progress.py --commits 5 > progress.json
-          python - <<'PY'
+          .ci-venv/bin/python runtime/progress.py --commits 5 > progress.json
+          .ci-venv/bin/python - <<'PY'
           import json
           import os
           from pathlib import Path
