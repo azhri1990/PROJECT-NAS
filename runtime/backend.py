@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 import os
 import sqlite3
 from typing import Any, Dict
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 
 from runtime.git_reader import get_repo_info
 from runtime.tool_gateway import build_default_gateway
@@ -10,7 +12,6 @@ app = FastAPI(title="PROJECT-NAS Local Backend")
 
 
 def resolve_session_db() -> str:
-    """Return the configured session database path, with a repo-local fallback."""
     configured = os.environ.get("PROJECT_NAS_SESSION_DB")
     if configured:
         return os.path.abspath(os.path.expanduser(configured))
@@ -25,7 +26,6 @@ PROMPT_PATHS = [
 ]
 
 
-
 def load_prompt() -> Dict[str, Any]:
     for path in PROMPT_PATHS:
         if os.path.exists(path):
@@ -34,9 +34,105 @@ def load_prompt() -> Dict[str, Any]:
     return {"path": None, "prompt": ""}
 
 
+def read_prompt(max_chars: int = 12000) -> dict[str, Any]:
+    loaded = load_prompt()
+    content = loaded["prompt"]
+    bounded = content[:max_chars]
+    return {
+        "path": loaded["path"],
+        "content": bounded,
+        "chars": len(bounded),
+        "truncated": len(content) > len(bounded),
+    }
+
+
 def run_git_info(commits: int = 10) -> Dict[str, Any]:
-    """Compatibility wrapper around the bounded Git reader."""
     return get_repo_info(commits)
+
+
+def _probe_http(url: str) -> dict[str, Any]:
+    try:
+        request = Request(url, method="GET")
+        with urlopen(request, timeout=2) as response:
+            return {"ok": 200 <= response.status < 300, "status_code": response.status}
+    except HTTPError as exc:
+        return {"ok": False, "status_code": exc.code, "error": str(exc.reason)}
+    except (URLError, OSError, TimeoutError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _probe_ollama() -> dict[str, Any]:
+    base = os.environ.get("PROJECT_NAS_OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    result = _probe_http(base.rstrip("/") + "/api/tags")
+    result["url"] = base
+    return result
+
+
+def _probe_memory_api() -> dict[str, Any]:
+    url = os.environ.get("PROJECT_NAS_MEMORY_HEALTH_URL", "http://127.0.0.1:5000/health")
+    result = _probe_http(url)
+    result["url"] = url
+    return result
+
+
+def _probe_memory_sqlite() -> dict[str, Any]:
+    db_path = os.environ.get(
+        "PROJECT_NAS_MEMORY_DB",
+        os.path.join(os.path.dirname(__file__), "claude-mem-db", "memory.sqlite3"),
+    )
+    db_path = os.path.abspath(os.path.expanduser(db_path))
+    if not os.path.splitext(db_path)[1]:
+        db_path = os.path.join(db_path, "memory.sqlite3")
+    if not os.path.isfile(db_path):
+        return {"ok": False, "path": db_path, "error": "database file not found"}
+    try:
+        uri = "file:" + db_path.replace("\\", "/") + "?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        return {"ok": True, "path": db_path, "records": int(count)}
+    except sqlite3.Error as exc:
+        return {"ok": False, "path": db_path, "error": str(exc)}
+
+
+def _probe_repository() -> dict[str, Any]:
+    try:
+        info = get_repo_info(1)
+        ok = info.get("branch") not in {None, "unknown"}
+        return {"ok": ok, "branch": info.get("branch"), "recent_commits": len(info.get("recent_commits", []))}
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _probe_model() -> dict[str, Any]:
+    base = os.environ.get("PROJECT_NAS_OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    model = os.environ.get("PROJECT_NAS_OLLAMA_MODEL", "llama3.2:3b")
+    try:
+        request = Request(base.rstrip("/") + "/api/tags", method="GET")
+        with urlopen(request, timeout=2) as response:
+            import json
+            payload = json.loads(response.read().decode("utf-8"))
+        models = {item.get("name") for item in payload.get("models", []) if isinstance(item, dict)}
+        return {"ok": model in models, "name": model}
+    except (HTTPError, URLError, OSError, TimeoutError, ValueError) as exc:
+        return {"ok": False, "name": model, "error": str(exc)}
+
+
+def health_report() -> dict[str, Any]:
+    components = {
+        "ollama": _probe_ollama(),
+        "memory_api": _probe_memory_api(),
+        "memory_sqlite": _probe_memory_sqlite(),
+        "repository": _probe_repository(),
+        "model": _probe_model(),
+    }
+    core = ("ollama", "memory_api", "model")
+    if any(not components[name].get("ok") for name in core):
+        status = "unavailable"
+    elif any(not component.get("ok") for component in components.values()):
+        status = "degraded"
+    else:
+        status = "healthy"
+    return {"status": status, "components": components}
 
 
 TOOL_GATEWAY = build_default_gateway(run_git_info)
@@ -48,16 +144,14 @@ def get_db_conn():
     if parent:
         os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS todos (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT,
-            status TEXT DEFAULT 'pending',
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
-        )"""
-    )
+    conn.execute("""CREATE TABLE IF NOT EXISTS todos (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""")
     conn.commit()
     return conn
 
@@ -66,9 +160,11 @@ def get_db_conn():
 async def get_prompt():
     return load_prompt()
 
+
 @app.get("/progress")
 async def progress(commits: int = 10):
     return TOOL_GATEWAY.execute("status.progress", {"commits": commits})
+
 
 @app.post("/tools/{tool_name}")
 async def execute_tool(tool_name: str, payload: Dict[str, Any]):
@@ -88,25 +184,10 @@ async def execute_tool(tool_name: str, payload: Dict[str, Any]):
 async def list_todos():
     conn = get_db_conn()
     try:
-        rows = conn.execute(
-            "SELECT id, title, description, status, created_at, updated_at "
-            "FROM todos ORDER BY created_at"
-        ).fetchall()
+        rows = conn.execute("SELECT id, title, description, status, created_at, updated_at FROM todos ORDER BY created_at").fetchall()
     finally:
         conn.close()
-    return {
-        "todos": [
-            {
-                "id": row[0],
-                "title": row[1],
-                "description": row[2],
-                "status": row[3],
-                "created_at": row[4],
-                "updated_at": row[5],
-            }
-            for row in rows
-        ]
-    }
+    return {"todos": [{"id": row[0], "title": row[1], "description": row[2], "status": row[3], "created_at": row[4], "updated_at": row[5]} for row in rows]}
 
 
 @app.post("/todos")
@@ -115,10 +196,7 @@ async def create_todo(item: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="id and title required")
     conn = get_db_conn()
     try:
-        conn.execute(
-            "INSERT INTO todos (id, title, description, status) VALUES (?, ?, ?, ?)",
-            (item["id"], item["title"], item.get("description"), item.get("status", "pending")),
-        )
+        conn.execute("INSERT INTO todos (id, title, description, status) VALUES (?, ?, ?, ?)", (item["id"], item["title"], item.get("description"), item.get("status", "pending")))
         conn.commit()
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="todo with id already exists")
@@ -141,10 +219,7 @@ async def update_todo(todo_id: str, item: Dict[str, Any]):
                 params.append(item[key])
         if updates:
             params.append(todo_id)
-            conn.execute(
-                f"UPDATE todos SET {', '.join(updates)}, updated_at = datetime('now') WHERE id = ?",
-                params,
-            )
+            conn.execute(f"UPDATE todos SET {', '.join(updates)}, updated_at = datetime('now') WHERE id = ?", params)
             conn.commit()
     finally:
         conn.close()
