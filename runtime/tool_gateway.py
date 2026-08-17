@@ -48,6 +48,8 @@ class ToolGateway:
             self._record_audit(name, False, reason)
             raise PermissionError(reason)
         if name not in self._tools:
+            reason = "unknown tool denied"
+            self._record_audit(name, False, reason)
             raise KeyError(name)
 
         spec = self._tools[name]
