@@ -12,7 +12,6 @@ def load_module():
 
 def test_context_budget_is_deterministic(monkeypatch, tmp_path):
     monkeypatch.setenv("PROJECT_NAS_MEMORY_DB", str(tmp_path / "memory"))
-    monkeypatch.setenv("PROJECT_NAS_TOTAL_PROMPT_CHARS", "200")
     module = load_module()
     module.MAX_TOTAL_PROMPT_CHARS = 200
 
@@ -38,8 +37,9 @@ def test_memory_retention_bounds_sqlite_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("PROJECT_NAS_MEMORY_DB", str(tmp_path / "memory"))
     monkeypatch.setenv("PROJECT_NAS_MAX_PERSISTED_MEMORIES", "2")
     module = load_module()
+    sqlite_collection = module.SQLiteMemoryCollection(str(tmp_path / "isolated.sqlite3"))
     for index in range(4):
-        module.collection.add(documents=[f"memory-{index}"], ids=[f"id-{index}"])
-    result = module.read_memories(limit=20)
-    assert result["count"] == 2
-    assert [item["document"] for item in result["memories"]] == ["memory-3", "memory-2"]
+        sqlite_collection.add(documents=[f"memory-{index}"], ids=[f"id-{index}"])
+    rows = sqlite_collection.read_records(limit=20)
+    assert len(rows) == 2
+    assert [row[1] for row in rows] == ["memory-3", "memory-2"]
