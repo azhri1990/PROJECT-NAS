@@ -105,16 +105,18 @@ def _probe_repository() -> dict[str, Any]:
 
 def _probe_model() -> dict[str, Any]:
     base = os.environ.get("PROJECT_NAS_OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-    model = os.environ.get("PROJECT_NAS_OLLAMA_MODEL", "llama3.2:3b")
+    configured = os.environ.get("PROJECT_NAS_OLLAMA_MODEL", "llama3.2:3b")
+    preferred = [configured, "llama3.2:3b", "llama3.2:1b", "llama3.1:8b"]
     try:
         request = Request(base.rstrip("/") + "/api/tags", method="GET")
         with urlopen(request, timeout=2) as response:
             import json
             payload = json.loads(response.read().decode("utf-8"))
-        models = {item.get("name") for item in payload.get("models", []) if isinstance(item, dict)}
-        return {"ok": model in models, "name": model}
+        models = sorted({item.get("name") for item in payload.get("models", []) if isinstance(item, dict) and item.get("name")})
+        selected = next((name for name in preferred if name in models), models[0] if models else None)
+        return {"ok": selected is not None, "name": selected or configured, "configured": configured, "fallback": selected is not None and selected != configured}
     except (HTTPError, URLError, OSError, TimeoutError, ValueError) as exc:
-        return {"ok": False, "name": model, "error": str(exc)}
+        return {"ok": False, "name": configured, "configured": configured, "fallback": False, "error": str(exc)}
 
 
 def health_report() -> dict[str, Any]:
