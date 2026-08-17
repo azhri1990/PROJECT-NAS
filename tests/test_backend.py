@@ -49,6 +49,27 @@ def test_tool_endpoint_rejects_unknown_or_process_tool():
     process = client.post("/tools/shell.run", json={"command": "whoami"})
     assert process.status_code == 403
 
+def test_progress_endpoint_uses_tool_gateway(monkeypatch):
+    backend = load_backend()
+
+    called = []
+
+    def fake_execute(name, payload):
+        called.append((name, payload))
+        return {"branch": "test"}
+
+    monkeypatch.setattr(backend.TOOL_GATEWAY, "execute", fake_execute)
+
+    client = TestClient(backend.app)
+
+    response = client.get("/progress?commits=3")
+
+    assert response.status_code == 200
+    assert response.json() == {"branch": "test"}
+    assert called == [
+        ("status.progress", {"commits": 3})
+    ]
+
 def test_custom_plugin_execution_is_disabled(tmp_path):
     backend = load_backend()
     backend.PLUGIN_DIR = str(tmp_path)

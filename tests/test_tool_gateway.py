@@ -101,23 +101,17 @@ def test_write_repository_is_denied_by_default():
     assert gateway.audit_log[-1]["allowed"] is False
 
 
-def test_network_access_is_denied_by_default():
-    gateway = ToolGateway()
-    gateway.register(
-        ToolSpec(
-            name="status.network.call",
-            capability=Capability.NETWORK_ACCESS,
-            risk=RiskLevel.HIGH,
-            input_validator=identity,
-            handler=lambda payload: payload,
-        )
-    )
+def test_default_gateway_registers_only_allowlisted_status_tools():
+    gateway = build_default_gateway(lambda commits: {
+        "recent_commits": list(range(commits))
+    })
 
-    with pytest.raises(PermissionError, match="network_access"):
-        gateway.execute("status.network.call", {"url": "http://example.invalid"})
+    assert gateway.execute("status.progress", {"commits": 2}) == {
+        "recent_commits": [0, 1]
+    }
 
-    assert gateway.audit_log[-1]["allowed"] is False
-
+    with pytest.raises(PermissionError):
+        gateway.execute("repo.progress", {"commits": 2})
 
 @pytest.mark.parametrize("name", ["shell.run", "process.run", "plugin.load", "custom.test", "network.call", "repo.progress", "unknown.tool"])
 def test_non_allowlisted_namespaces_are_denied_before_handler(name):

@@ -107,7 +107,7 @@ def build_default_gateway(progress_handler: Callable[[int], dict] | None = None)
     gateway = ToolGateway()
     gateway.register(
         ToolSpec(
-            name="repo.progress",
+            name="status.progress",
             capability=Capability.READ_REPOSITORY,
             risk=RiskLevel.LOW,
             input_validator=_validate_progress,

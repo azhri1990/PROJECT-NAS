@@ -84,11 +84,9 @@ def get_db_conn():
 async def get_prompt():
     return load_prompt()
 
-
 @app.get("/progress")
 async def progress(commits: int = 10):
-    return run_git_info(commits)
-
+    return TOOL_GATEWAY.execute("status.progress", {"commits": commits})
 
 @app.post("/tools/{tool_name}")
 async def execute_tool(tool_name: str, payload: Dict[str, Any]):
