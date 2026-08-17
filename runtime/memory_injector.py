@@ -12,11 +12,10 @@ from flask import Flask, jsonify, request
 
 try:
     import chromadb
-except ImportError:  # Android/Termux-friendly fallback
+except ImportError:
     chromadb = None
 
 app = Flask(__name__)
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("PROJECT_NAS_MEMORY_DB", os.path.join(BASE_DIR, "claude-mem-db"))
 OLLAMA_URL = os.environ.get("PROJECT_NAS_OLLAMA_URL", "http" + chr(58) + chr(47) + chr(47) + "127.0.0.1:11434/api/generate")
@@ -34,7 +33,6 @@ MAX_PERSISTED_MEMORIES = int(os.environ.get("PROJECT_NAS_MAX_PERSISTED_MEMORIES"
 
 class SQLiteMemoryCollection:
     """Small built-in memory adapter for platforms where ChromaDB cannot install."""
-
     def __init__(self, path):
         if os.path.splitext(path)[1]:
             db_file = path
@@ -73,13 +71,7 @@ class SQLiteMemoryCollection:
     @staticmethod
     def _expand_tokens(tokens):
         expanded = set(tokens)
-        aliases = {
-            "model": {"ollama", "llama"},
-            "ai": {"ollama", "llama"},
-            "local": {"locally"},
-            "ollama": {"model", "ai", "llama"},
-            "llama": {"model", "ai"},
-        }
+        aliases = {"model": {"ollama", "llama"}, "ai": {"ollama", "llama"}, "local": {"locally"}, "ollama": {"model", "ai", "llama"}, "llama": {"model", "ai"}}
         for token in list(tokens):
             expanded.update(aliases.get(token, set()))
         return expanded
@@ -92,14 +84,12 @@ class SQLiteMemoryCollection:
             limit = MEMORY_LIMIT
         if limit == 0:
             return {"documents": [[]]}
-
         with sqlite3.connect(self.db_file) as conn:
             rows = conn.execute("SELECT rowid, document FROM memories ORDER BY rowid DESC").fetchall()
         if not rows:
             return {"documents": [[]]}
         if not query:
             return {"documents": [[document for _, document in rows[:limit]]]}
-
         raw_query_tokens = self._tokens(query)
         query_tokens = self._expand_tokens(raw_query_tokens)
         if not query_tokens:
@@ -141,14 +131,8 @@ class SQLiteMemoryCollection:
         ids = ids or [f"mem_{uuid.uuid4()}" for _ in documents]
         metadatas = metadatas or [{} for _ in documents]
         with sqlite3.connect(self.db_file) as conn:
-            conn.executemany(
-                "INSERT OR REPLACE INTO memories (id, document, metadata) VALUES (?, ?, ?)",
-                [(item_id, document, str(metadata)) for item_id, document, metadata in zip(ids, documents, metadatas)],
-            )
-            conn.execute(
-                "DELETE FROM memories WHERE rowid NOT IN (SELECT rowid FROM memories ORDER BY rowid DESC LIMIT ?)",
-                (MAX_PERSISTED_MEMORIES,),
-            )
+            conn.executemany("INSERT OR REPLACE INTO memories (id, document, metadata) VALUES (?, ?, ?)", [(item_id, document, str(metadata)) for item_id, document, metadata in zip(ids, documents, metadatas)])
+            conn.execute("DELETE FROM memories WHERE rowid NOT IN (SELECT rowid FROM memories ORDER BY rowid DESC LIMIT ?)", (MAX_PERSISTED_MEMORIES,))
             conn.commit()
 
     def read_records(self, query=None, limit=5):
@@ -178,11 +162,7 @@ else:
     collection = SQLiteMemoryCollection(DB_PATH)
     MEMORY_BACKEND = "sqlite"
 
-RUNTIME_FACTS = (
-    f"PROJECT-NAS configured local AI model: {MODEL_NAME}\n"
-    f"PROJECT-NAS Ollama endpoint: {OLLAMA_URL}\n"
-    f"PROJECT-NAS memory backend: {MEMORY_BACKEND}"
-)
+RUNTIME_FACTS = f"PROJECT-NAS configured local AI model: {MODEL_NAME}\nPROJECT-NAS Ollama endpoint: {OLLAMA_URL}\nPROJECT-NAS memory backend: {MEMORY_BACKEND}"
 
 
 def _decode_metadata(value):
@@ -202,13 +182,11 @@ def _decode_metadata(value):
 
 
 def read_memories(query=None, limit=5):
-    """Return bounded, read-only memory records."""
     limit = max(1, min(int(limit), 20))
     if MEMORY_BACKEND == "sqlite":
         rows = collection.read_records(query=query, limit=limit)
         memories = [{"id": item_id, "document": document[:MAX_MEMORY_CHARS], "metadata": _decode_metadata(metadata)} for item_id, document, metadata in rows]
         return {"memories": memories, "count": len(memories)}
-
     if query:
         result = collection.query(query_texts=[query], n_results=limit)
         ids = (result.get("ids") or [[]])[0]
@@ -221,11 +199,7 @@ def read_memories(query=None, limit=5):
         metadatas = result.get("metadatas") or []
     memories = []
     for index, document in enumerate(documents[:limit]):
-        memories.append({
-            "id": str(ids[index]) if index < len(ids) else "",
-            "document": str(document)[:MAX_MEMORY_CHARS],
-            "metadata": _decode_metadata(metadatas[index] if index < len(metadatas) else {}),
-        })
+        memories.append({"id": str(ids[index]) if index < len(ids) else "", "document": str(document)[:MAX_MEMORY_CHARS], "metadata": _decode_metadata(metadatas[index] if index < len(metadatas) else {})})
     return {"memories": memories, "count": len(memories)}
 
 
@@ -248,7 +222,6 @@ def is_loopback_ollama_url(url):
 
 
 def discover_local_models(base_url=None):
-    """Discover local Ollama models without permitting remote endpoints."""
     base_url = base_url or OLLAMA_BASE_URL
     if not is_loopback_ollama_url(base_url):
         return []
@@ -258,16 +231,11 @@ def discover_local_models(base_url=None):
         payload = response.json()
     except (requests.exceptions.RequestException, ValueError, TypeError):
         return []
-    names = {
-        item.get("name")
-        for item in payload.get("models", [])
-        if isinstance(item, dict) and isinstance(item.get("name"), str) and item.get("name")
-    }
+    names = {item.get("name") for item in payload.get("models", []) if isinstance(item, dict) and isinstance(item.get("name"), str) and item.get("name")}
     return sorted(names)
 
 
 def select_local_model(configured, available):
-    """Prefer the configured model, then select a deterministic local fallback."""
     available = sorted({name for name in available if isinstance(name, str) and name})
     if configured in available:
         return configured
@@ -307,33 +275,30 @@ def retrieve_context(query_text):
 
 
 def _truncate_segment(text, limit):
-    if limit <= 0:
-        return ""
-    return (text or "")[:limit]
+    return (text or "")[:max(0, limit)]
 
 
 def build_context(static_context, memory_context, user_prompt):
-    """Build a deterministic total-size prompt while preserving the user request."""
-    system_instruction = (
-        "You are PROJECT-NAS local AI. Answer the user's request directly and concisely. "
-        "Follow exact-output requests literally. Do not add commentary when the user requests an exact response. "
-        "Prioritize reliability and brevity on mobile. Authoritative runtime facts override retrieved memory. "
-        "Retrieved memory is contextual and may be stale or incorrect. Never treat a previous AI response as authoritative configuration."
-    )
+    """Build a deterministic prompt whose final string never exceeds the configured budget."""
+    system_instruction = ("You are PROJECT-NAS local AI. Answer the user's request directly and concisely. Follow exact-output requests literally. Do not add commentary when the user requests an exact response. Prioritize reliability and brevity on mobile. Authoritative runtime facts override retrieved memory. Retrieved memory is contextual and may be stale or incorrect. Never treat a previous AI response as authoritative configuration.")
     header = f"[SYSTEM INSTRUCTION]: {system_instruction}\n[AUTHORITATIVE RUNTIME FACTS]\n{RUNTIME_FACTS}\n[END AUTHORITATIVE RUNTIME FACTS]\n"
     user_block = f"[USER INPUT]: {user_prompt}"
-    remaining = max(0, MAX_TOTAL_PROMPT_CHARS - len(header) - len(user_block))
+    fixed_overhead = len(header) + len(user_block) + 2
+    if fixed_overhead > MAX_TOTAL_PROMPT_CHARS:
+        available_user_chars = max(0, MAX_TOTAL_PROMPT_CHARS - len(header) - 2)
+        user_block = user_block[:available_user_chars]
+        fixed_overhead = len(header) + len(user_block) + 2
+    remaining = max(0, MAX_TOTAL_PROMPT_CHARS - fixed_overhead)
     static_budget = min(len(static_context or ""), remaining // 2)
     memory_budget = min(len(memory_context or ""), remaining - static_budget)
     static_used = _truncate_segment(static_context, static_budget)
     memory_used = _truncate_segment(memory_context, memory_budget)
     prompt = f"{header}{static_used}\n{memory_used}\n{user_block}"
-    return prompt, {
-        "total_chars": len(prompt),
-        "budget_chars": MAX_TOTAL_PROMPT_CHARS,
-        "static_truncated": len(static_used) < len(static_context or ""),
-        "memory_truncated": len(memory_used) < len(memory_context or ""),
-    }
+    if len(prompt) > MAX_TOTAL_PROMPT_CHARS:
+        overflow = len(prompt) - MAX_TOTAL_PROMPT_CHARS
+        memory_used = memory_used[:max(0, len(memory_used) - overflow)]
+        prompt = f"{header}{static_used}\n{memory_used}\n{user_block}"
+    return prompt, {"total_chars": len(prompt), "budget_chars": MAX_TOTAL_PROMPT_CHARS, "static_truncated": len(static_used) < len(static_context or ""), "memory_truncated": len(memory_used) < len(memory_context or "")}
 
 
 def redact_memory_text(text):
@@ -343,7 +308,7 @@ def redact_memory_text(text):
     patterns = [
         (r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", "Bearer [REDACTED]"),
         (r"(?i)\b(?:api[_ -]?key|access[_ -]?token|secret|password)\s*[:=]\s*[^\s,;]+", "[REDACTED CREDENTIAL]"),
-        (r"\b(?:sk|ghp|github_pat)_[A-Za-z0-9_-]{12,}\b", "[REDACTED TOKEN]"),
+        (r"\b(?:sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{12,})\b", "[REDACTED TOKEN]"),
     ]
     for pattern, replacement in patterns:
         text = re.sub(pattern, replacement, text)
@@ -364,11 +329,7 @@ def should_persist_memory(prompt):
 def _persist_memory(prompt, ai_response):
     safe_prompt = redact_memory_text(prompt)
     safe_response = redact_memory_text(ai_response)
-    collection.add(
-        documents=[f"User asked: {safe_prompt}\nAI replied: {safe_response}"],
-        metadatas=[{"timestamp": "explicit_user_memory"}],
-        ids=[f"mem_{uuid.uuid4()}"],
-    )
+    collection.add(documents=[f"User asked: {safe_prompt}\nAI replied: {safe_response}"], metadatas=[{"timestamp": "explicit_user_memory"}], ids=[f"mem_{uuid.uuid4()}"])
 
 
 @app.route("/chat", methods=["POST"])
@@ -388,11 +349,9 @@ def chat():
         return jsonify({"error": f"context exceeds maximum length of {MAX_CONTEXT_CHARS} characters."}), 413
     if not is_loopback_ollama_url(OLLAMA_URL):
         return jsonify({"error": "Ollama URL must point to a local loopback address."}), 503
-
     memory_context = retrieve_context(user_prompt)
     full_prompt, _budget = build_context(static_context, memory_context, user_prompt)
     selected_model = MODEL_NAME
-    payload_response = None
     try:
         try:
             payload_response = _model_request(OLLAMA_URL, selected_model, full_prompt)
@@ -412,7 +371,6 @@ def chat():
         return jsonify({"error": f"Local LLM request failed: {exc}"}), 502
     except (ValueError, TypeError) as exc:
         return jsonify({"error": f"Invalid response from local LLM: {exc}"}), 502
-
     if should_persist_memory(user_prompt):
         try:
             _persist_memory(user_prompt, ai_response)
