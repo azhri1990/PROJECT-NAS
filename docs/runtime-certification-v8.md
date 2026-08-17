@@ -1,0 +1,1 @@
+The certification workflow is auditable, loopback-only, and $0. It must pass before merge. Real-device validation is separate.
