@@ -5,46 +5,15 @@ import argparse
 import json
 import os
 import sqlite3
-import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-def _git_output(args):
-    try:
-        return subprocess.check_output(
-            ["git", *args], stderr=subprocess.DEVNULL, text=True
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        return None
-
-
-def _git_branch():
-    return _git_output(["rev-parse", "--abbrev-ref", "HEAD"])
-
-
-def _git_status():
-    return _git_output(["status", "--porcelain", "--branch"])
-
-
-def _git_recent_commits(commits):
-    if not 0 <= commits <= 50:
-        raise ValueError("commits must be between 0 and 50")
-    if commits == 0:
-        return ""
-    return _git_output(["log", "--oneline", "-n", str(commits)])
-
-
-def get_repo_info(commits=10):
-    if commits < 0:
-        raise ValueError("commits must be non-negative")
-    branch = _git_branch()
-    status = _git_status()
-    log = _git_recent_commits(commits)
-    return {
-        "branch": branch or "unknown",
-        "status_porcelain": status or "",
-        "recent_commits": log.splitlines() if log else [],
-    }
+from runtime.git_reader import get_repo_info
 
 
 def read_todos_from_db(db_path):

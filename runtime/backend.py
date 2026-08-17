@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException
 import os
 import sqlite3
-import subprocess
 from typing import Any, Dict
 
+from runtime.git_reader import get_repo_info
 from runtime.tool_gateway import build_default_gateway
 
 app = FastAPI(title="PROJECT-NAS Local Backend")
@@ -35,26 +35,8 @@ def load_prompt() -> Dict[str, Any]:
 
 
 def run_git_info(commits: int = 10) -> Dict[str, Any]:
-    try:
-        branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
-        ).strip()
-    except Exception:
-        branch = None
-    try:
-        status = subprocess.check_output(
-            ["git", "status", "--porcelain", "--branch"], text=True
-        )
-    except Exception:
-        status = ""
-    try:
-        log = subprocess.check_output(
-            ["git", "log", "--oneline", "-n", str(commits)], text=True
-        )
-        recent = [line.strip() for line in log.splitlines() if line.strip()]
-    except Exception:
-        recent = []
-    return {"branch": branch, "status_porcelain": status, "recent_commits": recent}
+    """Compatibility wrapper around the bounded Git reader."""
+    return get_repo_info(commits)
 
 
 TOOL_GATEWAY = build_default_gateway(run_git_info)
