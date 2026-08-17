@@ -1,5 +1,8 @@
 fastapi>=0.115,<1
-uvicorn[standard]>=0.30,<1
+# Android/Termux: keep the server dependency pure-Python and avoid optional native wheels.
+uvicorn[standard]>=0.30,<1; sys_platform != "android"
+uvicorn>=0.30,<1; sys_platform == "android"
 flask>=3.0,<4
 requests>=2.31,<3
-chromadb>=1.0,<2
+# ChromaDB is desktop-only; Android/Termux uses the built-in SQLite memory adapter.
+chromadb>=1.0,<2; sys_platform != "android"
