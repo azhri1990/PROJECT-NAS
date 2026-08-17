@@ -16,7 +16,7 @@ def test_resolve_local_model_prefers_configured_without_network(monkeypatch):
     monkeypatch.setattr(module, "discover_local_models", lambda base_url=None: called.append(base_url) or ["custom-model", "llama3.2:3b"])
 
     assert module.resolve_local_model("custom-model") == "custom-model"
-    assert called == [None]
+    assert called == ["http://127.0.0.1:11434"]
 
 
 def test_resolve_local_model_uses_known_fallback_before_chat(monkeypatch):
@@ -40,4 +40,4 @@ def test_resolve_local_model_caches_discovery_for_short_period(monkeypatch):
 
     assert module.resolve_local_model("missing-model") == "llama3.2:3b"
     assert module.resolve_local_model("missing-model") == "llama3.2:3b"
-    assert calls == [None]
+    assert calls == ["http://127.0.0.1:11434"]
