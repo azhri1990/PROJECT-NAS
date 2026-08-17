@@ -57,9 +57,79 @@ def test_write_repository_is_denied_by_default():
     assert gateway.audit_log[-1]["allowed"] is False
 
 
+def test_write_session_is_allowed_only_for_low_risk_session_tools():
+    gateway = ToolGateway()
+    gateway.register(ToolSpec("todo.create", Capability.WRITE_SESSION, RiskLevel.LOW, identity, identity))
+    assert gateway.execute("todo.create", {"id": "x", "title": "ok"}) == {"id": "x", "title": "ok"}
+    assert gateway.audit_log[-1]["allowed"] is True
+
+    high_risk = ToolGateway()
+    high_risk.register(ToolSpec("todo.update", Capability.WRITE_SESSION, RiskLevel.HIGH, identity, identity))
+    with pytest.raises(PermissionError, match="high-risk"):
+        high_risk.execute("todo.update", {"id": "x", "title": "blocked"})
+
+
+def test_default_gateway_registers_todo_control_plane_tools():
+    gateway = build_default_gateway(lambda commits: {"recent_commits": list(range(commits))})
+    assert {"todo.create", "todo.update", "todo.list"}.issubset(gateway._tools)
+
+
+def test_todo_create_validation_is_bounded_and_strict():
+    gateway = build_default_gateway(lambda commits: {})
+    valid = {"id": "T-1", "title": "Fix runtime", "description": "close policy gap", "status": "pending"}
+    assert gateway.execute("todo.create", valid)["id"] == "T-1"
+    for payload in (
+        {"id": "", "title": "x"},
+        {"id": "T-1", "title": ""},
+        {"id": "T-1", "title": "x", "unexpected": True},
+        {"id": "T-1", "title": "x", "status": "invalid"},
+        {"id": "T-1", "title": "x", "description": "x" * 5001},
+    ):
+        with pytest.raises(ValueError):
+            gateway.execute("todo.create", payload)
+
+
+def test_todo_update_validation_requires_id_and_known_fields():
+    gateway = build_default_gateway(lambda commits: {})
+    assert gateway.execute("todo.update", {"id": "T-1", "status": "done"})["id"] == "T-1"
+    with pytest.raises(ValueError):
+        gateway.execute("todo.update", {"status": "done"})
+    with pytest.raises(ValueError):
+        gateway.execute("todo.update", {"id": "T-1", "created_at": "now"})
+    with pytest.raises(ValueError):
+        gateway.execute("todo.update", {"id": "", "status": "done"})
+
+
+def test_todo_list_validation_is_strict():
+    gateway = build_default_gateway(lambda commits: {})
+    result = gateway.execute("todo.list", {})
+    assert "todos" in result
+    with pytest.raises(ValueError):
+        gateway.execute("todo.list", {"unexpected": True})
+    with pytest.raises(ValueError):
+        gateway.execute("todo.list", {"limit": 0})
+    with pytest.raises(ValueError):
+        gateway.execute("todo.list", {"limit": 101})
+
+
+def test_todo_mutations_are_audited():
+    gateway = build_default_gateway(lambda commits: {})
+    gateway.execute("todo.create", {"id": "AUDIT-1", "title": "Audit me"})
+    assert gateway.audit_log[-1]["tool"] == "todo.create"
+    assert gateway.audit_log[-1]["allowed"] is True
+
+
 def test_default_gateway_registers_exact_control_plane_tools():
     gateway = build_default_gateway(lambda commits: {"recent_commits": list(range(commits))})
-    assert set(gateway._tools) == {"status.health", "status.progress", "prompt.get", "memory.read"}
+    assert set(gateway._tools) == {
+        "status.health",
+        "status.progress",
+        "prompt.get",
+        "memory.read",
+        "todo.create",
+        "todo.update",
+        "todo.list",
+    }
     assert gateway.execute("status.progress", {"commits": 2}) == {"recent_commits": [0, 1]}
 
 
