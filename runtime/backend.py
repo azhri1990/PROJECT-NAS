@@ -26,6 +26,14 @@ PROMPT_PATHS = [
 ]
 
 
+class TodoConflictError(RuntimeError):
+    """Raised when a TODO identifier already exists."""
+
+
+class TodoNotFoundError(RuntimeError):
+    """Raised when a TODO identifier does not exist."""
+
+
 def load_prompt() -> Dict[str, Any]:
     for path in PROMPT_PATHS:
         if os.path.exists(path):
@@ -137,9 +145,6 @@ def health_report() -> dict[str, Any]:
     return {"status": status, "components": components}
 
 
-TOOL_GATEWAY = build_default_gateway(run_git_info)
-
-
 def get_db_conn():
     db_path = resolve_session_db()
     parent = os.path.dirname(db_path)
@@ -156,6 +161,71 @@ def get_db_conn():
     )""")
     conn.commit()
     return conn
+
+
+def _todo_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "title": row[1],
+        "description": row[2],
+        "status": row[3],
+        "created_at": row[4],
+        "updated_at": row[5],
+    }
+
+
+def list_todo_records(payload: dict[str, Any]) -> dict[str, Any]:
+    limit = payload["limit"]
+    conn = get_db_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, title, description, status, created_at, updated_at "
+            "FROM todos ORDER BY created_at, id LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"todos": [_todo_row(row) for row in rows]}
+
+
+def create_todo_record(payload: dict[str, Any]) -> dict[str, Any]:
+    conn = get_db_conn()
+    try:
+        try:
+            conn.execute(
+                "INSERT INTO todos (id, title, description, status) VALUES (?, ?, ?, ?)",
+                (payload["id"], payload["title"], payload["description"], payload["status"]),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError as exc:
+            raise TodoConflictError("todo with id already exists") from exc
+    finally:
+        conn.close()
+    return {"created": True, "id": payload["id"]}
+
+
+def update_todo_record(payload: dict[str, Any]) -> dict[str, Any]:
+    todo_id = payload["id"]
+    mutable_fields = ("title", "description", "status")
+    updates = [field for field in mutable_fields if field in payload]
+    values = [payload[field] for field in updates]
+    conn = get_db_conn()
+    try:
+        if not conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone():
+            raise TodoNotFoundError("todo not found")
+        values.append(todo_id)
+        conn.execute(
+            f"UPDATE todos SET {', '.join(f'{field} = ?' for field in updates)}, "
+            "updated_at = datetime('now') WHERE id = ?",
+            values,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"updated": True, "id": todo_id}
+
+
+TOOL_GATEWAY = build_default_gateway(run_git_info)
 
 
 @app.get("/health")
@@ -183,54 +253,42 @@ async def execute_tool(tool_name: str, payload: Dict[str, Any]):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TodoConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TodoNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
 
 @app.get("/todos")
-async def list_todos():
-    conn = get_db_conn()
+async def list_todos(limit: int = 100):
     try:
-        rows = conn.execute("SELECT id, title, description, status, created_at, updated_at FROM todos ORDER BY created_at").fetchall()
-    finally:
-        conn.close()
-    return {"todos": [{"id": row[0], "title": row[1], "description": row[2], "status": row[3], "created_at": row[4], "updated_at": row[5]} for row in rows]}
+        return TOOL_GATEWAY.execute("todo.list", {"limit": limit})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/todos")
 async def create_todo(item: Dict[str, Any]):
-    if "id" not in item or "title" not in item:
-        raise HTTPException(status_code=400, detail="id and title required")
-    conn = get_db_conn()
     try:
-        conn.execute("INSERT INTO todos (id, title, description, status) VALUES (?, ?, ?, ?)", (item["id"], item["title"], item.get("description"), item.get("status", "pending")))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="todo with id already exists")
-    finally:
-        conn.close()
-    return {"created": True, "id": item["id"]}
+        return TOOL_GATEWAY.execute("todo.create", item)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TodoConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.put("/todos/{todo_id}")
 async def update_todo(todo_id: str, item: Dict[str, Any]):
-    conn = get_db_conn()
+    payload = dict(item)
+    payload["id"] = todo_id
     try:
-        if not conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone():
-            raise HTTPException(status_code=404, detail="todo not found")
-        updates = []
-        params = []
-        for key in ("title", "description", "status"):
-            if key in item:
-                updates.append(f"{key} = ?")
-                params.append(item[key])
-        if updates:
-            params.append(todo_id)
-            conn.execute(f"UPDATE todos SET {', '.join(updates)}, updated_at = datetime('now') WHERE id = ?", params)
-            conn.commit()
-    finally:
-        conn.close()
-    return {"updated": True, "id": todo_id}
+        return TOOL_GATEWAY.execute("todo.update", payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TodoNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/")
