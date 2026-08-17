@@ -324,7 +324,7 @@ chat_runtime() {
 case "${1:-}" in
     start) start_runtime ;;
     stop) stop_runtime ;;
-    restart) stop_runtime; start_runtime ;;
+    restart) stop_runtime || true; start_runtime ;;
     status) status_runtime ;;
     doctor) doctor_runtime ;;
     chat) chat_runtime ;;
