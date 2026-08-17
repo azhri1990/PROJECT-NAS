@@ -46,21 +46,14 @@ def test_model_discovery_is_loopback_only(monkeypatch, tmp_path):
     assert called == []
 
 
-def test_chat_falls_back_when_configured_model_is_missing(monkeypatch, tmp_path):
+def test_chat_uses_preflight_fallback_before_generation(monkeypatch, tmp_path):
     monkeypatch.setenv("PROJECT_NAS_MEMORY_DB", str(tmp_path / "memory"))
     module = load_module()
     monkeypatch.setattr(module, "retrieve_context", lambda prompt: "")
-
-    class FakeHTTPError(module.requests.exceptions.HTTPError):
-        pass
-
     calls = []
 
     def fake_post(url, json, timeout):
         calls.append(json["model"])
-        if len(calls) == 1:
-            response = SimpleNamespace(status_code=404)
-            raise FakeHTTPError("model not found", response=response)
         return SimpleNamespace(
             raise_for_status=lambda: None,
             json=lambda: {"response": "fallback response"},
@@ -72,7 +65,7 @@ def test_chat_falls_back_when_configured_model_is_missing(monkeypatch, tmp_path)
     response = module.app.test_client().post("/chat", json={"prompt": "hello"})
     assert response.status_code == 200
     assert response.get_json() == {"response": "fallback response"}
-    assert calls == [module.MODEL_NAME, "fallback-model"]
+    assert calls == ["fallback-model"]
 
 
 def test_chat_rejects_oversized_prompt(monkeypatch, tmp_path):
@@ -115,7 +108,7 @@ def test_chat_rejects_non_loopback_ollama_url(monkeypatch, tmp_path):
     module = load_module()
 
     response = module.app.test_client().post(
-        "/chat",
+        "/chat", 
         json={"prompt": "hello"},
     )
 
