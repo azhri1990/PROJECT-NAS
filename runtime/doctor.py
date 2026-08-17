@@ -124,6 +124,11 @@ def check_memory_database() -> Check:
         return Check("Memory store", False, str(exc))
 
 
+def check_database() -> Check:
+    """Backward-compatible alias for the configured session database check."""
+    return check_session_database()
+
+
 def check_session_database() -> Check:
     configured = os.getenv("PROJECT_NAS_SESSION_DB")
     path = Path(configured).expanduser() if configured else ROOT / "session.db"
@@ -131,7 +136,11 @@ def check_session_database() -> Check:
         path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(path) as conn:
             conn.execute("SELECT 1")
-        return Check("Session store", True, str(path.relative_to(ROOT)))
+        try:
+            display_path = str(path.relative_to(ROOT))
+        except ValueError:
+            display_path = str(path)
+        return Check("Session store", True, display_path)
     except (OSError, sqlite3.Error) as exc:
         return Check("Session store", False, str(exc))
 
