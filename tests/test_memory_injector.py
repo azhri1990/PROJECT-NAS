@@ -108,7 +108,7 @@ def test_chat_rejects_non_loopback_ollama_url(monkeypatch, tmp_path):
     module = load_module()
 
     response = module.app.test_client().post(
-        "/chat", 
+        "/chat",
         json={"prompt": "hello"},
     )
 
