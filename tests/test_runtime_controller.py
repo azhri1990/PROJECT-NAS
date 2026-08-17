@@ -39,6 +39,12 @@ def test_stop_reports_external_services_without_claiming_ownership(tmp_path):
 def test_stop_succeeds_when_no_services_are_running(tmp_path):
     env = dict(os.environ)
     env["PROJECT_NAS_TEST_PID_DIR"] = str(tmp_path / "pids")
+    # Isolate this test from any real PROJECT-NAS runtime that may be running
+    # on the developer/CI host. The behavior under test is the no-service path,
+    # not whether an unrelated local service happens to answer its default port.
+    env["PROJECT_NAS_BACKEND_HEALTH_URL"] = "http://127.0.0.1:1/health"
+    env["PROJECT_NAS_MEMORY_HEALTH_URL"] = "http://127.0.0.1:1/health"
+    env["PROJECT_NAS_OLLAMA_BASE_URL"] = "http://127.0.0.1:1"
 
     result = run_controller("stop", env=env)
     output = (result.stdout + result.stderr).lower()
