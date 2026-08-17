@@ -1,0 +1,1 @@
+Automated certification does not claim real hardware success. It proves the software lifecycle deterministically. Real Termux/Ollama smoke is the final device gate.
