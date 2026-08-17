@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 MASTER_PROMPT_FILE="$PROJECT_ROOT/ai/MASTER_PROMPT.md"
 CHAT_URL="${PROJECT_NAS_CHAT_URL:-http://127.0.0.1:5000/chat}"
 OLLAMA_URL="${PROJECT_NAS_OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-PID_DIR="$PROJECT_ROOT/runtime/.pids"
+PID_DIR="${PROJECT_NAS_TEST_PID_DIR:-$PROJECT_ROOT/runtime/.pids}"
 LOG_DIR="$PROJECT_ROOT/runtime"
 MEMORY_PID_FILE="$PID_DIR/memory-injector.pid"
 OLLAMA_PID_FILE="$PID_DIR/ollama.pid"
@@ -117,8 +117,27 @@ stop_one() {
 }
 
 stop_runtime() {
-    stop_one "memory injector" "$MEMORY_PID_FILE"
-    stop_one "Ollama" "$OLLAMA_PID_FILE"
+    local ownership_missing=0
+
+    if [ -f "$MEMORY_PID_FILE" ]; then
+        stop_one "memory injector" "$MEMORY_PID_FILE"
+    else
+        echo "✗ Cannot stop memory injector: controller ownership state is missing." >&2
+        ownership_missing=1
+    fi
+
+    if [ -f "$OLLAMA_PID_FILE" ]; then
+        stop_one "Ollama" "$OLLAMA_PID_FILE"
+    else
+        echo "✗ Cannot stop Ollama: controller ownership state is missing." >&2
+        ownership_missing=1
+    fi
+
+    if [ "$ownership_missing" -ne 0 ]; then
+        echo "PROJECT-NAS runtime: STOPPED WITH OWNERSHIP ERRORS" >&2
+        return 1
+    fi
+
     echo "PROJECT-NAS runtime: STOPPED"
 }
 
