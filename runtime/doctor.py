@@ -137,7 +137,10 @@ def check_prompt() -> Check:
 
 def check_ollama() -> Check:
     url = os.getenv("OLLAMA_URL", "http" + chr(58) + chr(47) + chr(47) + "127.0.0.1:11434/api/tags")
-    if os.getenv("PROJECT_NAS_DOCTOR_OFFLINE") == "1":
+    # CI/offline doctor mode skips the default service probe, but an explicitly
+    # supplied URL must still be probed so unit tests and diagnostics can verify
+    # that an unavailable endpoint is reported correctly.
+    if os.getenv("PROJECT_NAS_DOCTOR_OFFLINE") == "1" and "OLLAMA_URL" not in os.environ:
         return Check("Local LLM", True, "offline verification mode; service probe skipped")
     try:
         request = Request(url, method="GET")
