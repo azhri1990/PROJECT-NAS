@@ -6,6 +6,7 @@ from runtime.policy import Capability, PolicyEngine, RiskLevel, ToolRequest
 
 MAX_MEMORY_LIMIT = 20
 MAX_MEMORY_QUERY_CHARS = 500
+MAX_MEMORY_TOTAL_CHARS = 6000
 MAX_PROMPT_CHARS = 12000
 MAX_PROMPT_RESPONSE_CHARS = 12000
 MAX_PROGRESS_COMMITS = 50
@@ -141,6 +142,27 @@ def _validate_prompt(payload: dict) -> dict:
     return {"max_chars": max_chars}
 
 
+def _bound_memory_result(result: Any) -> Any:
+    """Enforce a gateway-level aggregate memory budget before context reaches callers."""
+    if not isinstance(result, dict) or not isinstance(result.get("memories"), list):
+        return result
+    bounded = []
+    used = 0
+    for memory in result["memories"]:
+        if not isinstance(memory, dict):
+            continue
+        document = str(memory.get("document", ""))
+        remaining = MAX_MEMORY_TOTAL_CHARS - used
+        if remaining <= 0:
+            break
+        clipped = document[:remaining]
+        item = dict(memory)
+        item["document"] = clipped
+        bounded.append(item)
+        used += len(clipped)
+    return {**result, "memories": bounded, "count": len(bounded), "truncated": len(bounded) < len(result["memories"]) or used < sum(len(str(item.get("document", ""))) for item in result["memories"] if isinstance(item, dict))}
+
+
 def build_default_gateway(progress_handler: Callable[[int], dict] | None = None) -> ToolGateway:
     """Create the bounded read-only v1 control plane."""
     if progress_handler is None:
@@ -177,6 +199,6 @@ def build_default_gateway(progress_handler: Callable[[int], dict] | None = None)
         capability=Capability.READ_RUNTIME,
         risk=RiskLevel.LOW,
         input_validator=_validate_memory,
-        handler=lambda payload: read_memories(payload["query"], payload["limit"]),
+        handler=lambda payload: _bound_memory_result(read_memories(payload["query"], payload["limit"])),
     ))
     return gateway
