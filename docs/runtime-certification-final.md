@@ -1,0 +1,1 @@
+The automated workflow is a deterministic software lifecycle gate. Real-device validation is required before claiming fully operational.
