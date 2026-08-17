@@ -1,0 +1,1 @@
+Final green requires automated runtime smoke plus real Termux/Ollama smoke. No paid service is part of the certification path.
