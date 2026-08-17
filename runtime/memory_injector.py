@@ -50,8 +50,8 @@ class SQLiteMemoryCollection:
 
     @staticmethod
     def _tokens(text):
-        """Normalize text into lightweight retrieval tokens."""
-        text = text.lower()
+        """Normalize text into deterministic retrieval tokens."""
+        text = (text or "").lower()
         text = re.sub(r"[^a-z0-9_.:+-]+", " ", text)
 
         stop_words = {
@@ -59,24 +59,27 @@ class SQLiteMemoryCollection:
             "does", "for", "from", "has", "have", "how", "i",
             "in", "is", "it", "of", "on", "or", "that", "the",
             "this", "to", "what", "which", "with", "who", "where",
+            "when", "why", "do",
         }
 
         tokens = []
-
         for token in text.split():
             if token in stop_words:
                 continue
 
-            if token.endswith("ally") and len(token) > 7:
-                token = token[:-5] + "al"
-            elif token.endswith("ing") and len(token) > 5:
+            # Conservative normalization. Avoid destructive stemming such
+            # as turning "uses" into "us".
+            if token.endswith("ies") and len(token) > 5:
+                token = token[:-3] + "y"
+            elif token.endswith("ing") and len(token) > 6:
                 token = token[:-3]
-            elif token.endswith("es") and len(token) > 4:
+            elif token.endswith("ed") and len(token) > 5:
                 token = token[:-2]
-            elif token.endswith("s") and len(token) > 3:
+            elif token.endswith("s") and len(token) > 4 and not token.endswith("ss"):
                 token = token[:-1]
 
-            tokens.append(token)
+            if token:
+                tokens.append(token)
 
         return tokens
 
@@ -99,7 +102,16 @@ class SQLiteMemoryCollection:
         return expanded
 
     def query(self, query_texts, n_results=MEMORY_LIMIT):
+        """Retrieve relevant memories using deterministic TF-IDF-lite scoring."""
         query = (query_texts or [""])[0].strip()
+
+        try:
+            limit = max(0, int(n_results))
+        except (TypeError, ValueError):
+            limit = MEMORY_LIMIT
+
+        if limit == 0:
+            return {"documents": [[]]}
 
         with sqlite3.connect(self.db_file) as conn:
             rows = conn.execute(
@@ -112,60 +124,91 @@ class SQLiteMemoryCollection:
         if not query:
             return {
                 "documents": [[
-                    document for _, document in rows[:n_results]
+                    document for _, document in rows[:limit]
                 ]]
             }
 
-        query_tokens = self._expand_tokens(self._tokens(query))
+        raw_query_tokens = self._tokens(query)
+        query_tokens = self._expand_tokens(raw_query_tokens)
 
         if not query_tokens:
             return {"documents": [[]]}
 
-        scored = []
+        # Build document frequency over the complete memory corpus.
+        tokenized_documents = []
+        document_frequency = {}
 
         for rowid, document in rows:
-            document_tokens = self._expand_tokens(
-                self._tokens(document)
-            )
+            tokens = list(self._expand_tokens(self._tokens(document)))
+            tokenized_documents.append((rowid, document, tokens))
 
-            overlap = query_tokens & document_tokens
+            for token in set(tokens):
+                document_frequency[token] = document_frequency.get(token, 0) + 1
 
-            if not overlap:
+        corpus_size = len(tokenized_documents)
+
+        technical_terms = {
+            "ollama",
+            "llama",
+            "llama3.2:3b",
+            "model",
+            "ai",
+            "sqlite",
+            "chromadb",
+            "termux",
+            "android",
+        }
+
+        scored = []
+
+        for rowid, document, document_tokens in tokenized_documents:
+            if not document_tokens:
                 continue
 
-            # Ignore generic repository identifiers when ranking.
+            document_set = set(document_tokens)
+            overlap = query_tokens & document_set
+
+            # PROJECT-NAS alone is not sufficient evidence of relevance.
             meaningful_overlap = {
                 token for token in overlap
-                if token not in {"project-nas"}
+                if token != "project-nas"
             }
 
             if not meaningful_overlap:
                 continue
 
-            score = len(meaningful_overlap)
+            score = 0.0
 
-            # Give technical/model terms substantially more weight.
-            technical_terms = {
-                "ollama",
-                "llama",
-                "llama3.2:3b",
-                "model",
-                "ai",
-                "sqlite",
-                "chromadb",
-                "termux",
-                "android",
-            }
+            for token in meaningful_overlap:
+                # Smoothed IDF. Common terms contribute less than distinctive
+                # terms, while rare technical terms contribute more.
+                df = document_frequency.get(token, 0)
+                idf = 1.0 + (
+                    __import__("math").log(
+                        (corpus_size + 1) / (df + 1)
+                    )
+                )
 
-            score += sum(
-                2 for token in meaningful_overlap
-                if token in technical_terms
-            )
+                tf = document_tokens.count(token)
+                score += (1.0 + __import__("math").log(tf)) * idf
 
-            # Prefer documents containing distinctive query concepts.
-            score += len(
-                meaningful_overlap & set(self._tokens(query))
-            ) * 1.5
+                if token in raw_query_tokens:
+                    score += 1.5
+
+                if token in technical_terms:
+                    score += 1.5
+
+            # Strong bonus when a distinctive phrase-like query concept
+            # appears directly in the document.
+            raw_document = document.lower()
+            raw_query = query.lower()
+
+            if raw_query and raw_query in raw_document:
+                score += 4.0
+
+            # Reject extremely weak accidental overlaps.
+            if score < 2.0:
+                continue
 
             scored.append((score, rowid, document))
 
@@ -174,7 +217,7 @@ class SQLiteMemoryCollection:
         return {
             "documents": [[
                 document
-                for _, _, document in scored[:n_results]
+                for _, _, document in scored[:limit]
             ]]
         }
 
