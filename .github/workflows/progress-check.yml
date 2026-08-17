@@ -8,6 +8,7 @@ permissions:
 env:
   PYTHONPATH: ${{ github.workspace }}
   PYTHONDONTWRITEBYTECODE: "1"
+  PROJECT_NAS_DOCTOR_OFFLINE: "1"
 
 jobs:
   progress-check:
