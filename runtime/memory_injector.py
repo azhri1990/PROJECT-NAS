@@ -379,7 +379,6 @@ def chat():
             if not isinstance(ai_response, str):
                 return jsonify({"error": "Ollama returned no valid 'response' field."}), 502
             ai_response = ai_response[:MAX_RESPONSE_CHARS]
-            selected_model = fallback
         except requests.exceptions.RequestException as retry_exc:
             return jsonify({"error": f"Local LLM fallback request failed: {retry_exc}"}), 502
     except requests.exceptions.RequestException as exc:
@@ -391,7 +390,7 @@ def chat():
             _persist_memory(user_prompt, ai_response)
         except Exception as exc:
             print(f"Warning: failed to save memory: {exc}")
-    return jsonify({"response": ai_response, "model": selected_model})
+    return jsonify({"response": ai_response})
 
 
 if __name__ == "__main__":
