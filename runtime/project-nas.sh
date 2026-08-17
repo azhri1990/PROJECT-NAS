@@ -11,7 +11,9 @@ OLLAMA_URL="${PROJECT_NAS_OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
 PID_DIR="${PROJECT_NAS_TEST_PID_DIR:-$PROJECT_ROOT/runtime/.pids}"
 LOG_DIR="$PROJECT_ROOT/runtime"
 MEMORY_PID_FILE="$PID_DIR/memory-injector.pid"
+MEMORY_ID_FILE="$PID_DIR/memory-injector.identity"
 OLLAMA_PID_FILE="$PID_DIR/ollama.pid"
+OLLAMA_ID_FILE="$PID_DIR/ollama.identity"
 MEMORY_LOG="$LOG_DIR/mobile-server.log"
 OLLAMA_LOG="$LOG_DIR/ollama.log"
 
@@ -36,11 +38,50 @@ pid_is_running() {
     [ -f "$pid_file" ] || return 1
     local pid
     pid=$(cat "$pid_file" 2>/dev/null || true)
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+process_cmdline() {
+    local pid="$1"
+    if [ -r "/proc/$pid/cmdline" ]; then
+        tr '\0' ' ' < "/proc/$pid/cmdline" | sed 's/[[:space:]]*$//'
+    fi
+}
+
+process_identity_matches() {
+    local pid_file="$1"
+    local identity_file="$2"
+
+    [ -f "$pid_file" ] || return 1
+    [ -f "$identity_file" ] || return 1
+
+    local pid expected actual
+    pid=$(cat "$pid_file" 2>/dev/null || true)
+    expected=$(cat "$identity_file" 2>/dev/null || true)
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [ -n "$expected" ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+
+    actual=$(process_cmdline "$pid")
+    [ -n "$actual" ] || return 1
+
+    [ "$actual" = "$expected" ]
 }
 
 write_pid() {
     printf '%s\n' "$1" > "$2"
+}
+
+write_identity() {
+    local pid="$1"
+    local identity_file="$2"
+    local identity
+
+    identity=$(process_cmdline "$pid")
+    [ -n "$identity" ] || return 1
+
+    printf '%s\n' "$identity" > "$identity_file"
 }
 
 wait_for_http() {
@@ -69,6 +110,11 @@ start_ollama() {
     echo "Starting Ollama..."
     nohup ollama serve >>"$OLLAMA_LOG" 2>&1 &
     write_pid "$!" "$OLLAMA_PID_FILE"
+    if ! write_identity "$!" "$OLLAMA_ID_FILE"; then
+        echo "✗ Could not establish Ollama process identity." >&2
+        rm -f "$OLLAMA_PID_FILE" "$OLLAMA_ID_FILE"
+        return 1
+    fi
 
     if ! wait_for_http "$OLLAMA_URL/api/tags" 30; then
         echo "✗ Ollama failed to become ready." >&2
@@ -86,6 +132,11 @@ start_memory() {
     echo "Starting PROJECT-NAS memory injector..."
     nohup python "$PROJECT_ROOT/runtime/memory_injector.py" >>"$MEMORY_LOG" 2>&1 &
     write_pid "$!" "$MEMORY_PID_FILE"
+    if ! write_identity "$!" "$MEMORY_ID_FILE"; then
+        echo "✗ Could not establish memory injector process identity." >&2
+        rm -f "$MEMORY_PID_FILE" "$MEMORY_ID_FILE"
+        return 1
+    fi
 
     if ! wait_for_http "http://127.0.0.1:5000/health" 30; then
         echo "✗ Memory injector failed to become ready." >&2
@@ -103,38 +154,58 @@ start_runtime() {
 stop_one() {
     local name="$1"
     local pid_file="$2"
-    if pid_is_running "$pid_file"; then
-        local pid
-        pid=$(cat "$pid_file")
-        echo "Stopping $name (PID $pid)..."
-        kill "$pid" 2>/dev/null || true
-        for _ in $(seq 1 10); do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 1
-        done
+    local identity_file="$3"
+
+    if ! [ -f "$pid_file" ] || ! [ -f "$identity_file" ]; then
+        echo "✗ Cannot stop $name: controller ownership state is incomplete." >&2
+        return 1
     fi
-    rm -f "$pid_file"
+
+    if ! process_identity_matches "$pid_file" "$identity_file"; then
+        echo "✗ Cannot stop $name: process identity does not match controller ownership." >&2
+        return 1
+    fi
+
+    local pid
+    pid=$(cat "$pid_file")
+    echo "Stopping $name (PID $pid)..."
+    kill "$pid" 2>/dev/null || true
+
+    for _ in $(seq 1 10); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "✗ $name did not terminate cleanly." >&2
+        return 1
+    fi
+
+    rm -f "$pid_file" "$identity_file"
 }
 
 stop_runtime() {
-    local ownership_missing=0
+    local failed=0
 
-    if [ -f "$MEMORY_PID_FILE" ]; then
-        stop_one "memory injector" "$MEMORY_PID_FILE"
+    if [ -f "$MEMORY_PID_FILE" ] || [ -f "$MEMORY_ID_FILE" ]; then
+        stop_one "memory injector" "$MEMORY_PID_FILE" "$MEMORY_ID_FILE" || failed=1
+    elif curl -fsS --connect-timeout 1 --max-time 2         "http://127.0.0.1:5000/health" >/dev/null 2>&1; then
+        echo "↷ Memory injector left running: externally managed." >&2
+        failed=1
     else
-        echo "✗ Cannot stop memory injector: controller ownership state is missing." >&2
-        ownership_missing=1
+        echo "↷ Memory injector not running under controller ownership."
     fi
 
-    if [ -f "$OLLAMA_PID_FILE" ]; then
-        stop_one "Ollama" "$OLLAMA_PID_FILE"
+    if [ -f "$OLLAMA_PID_FILE" ] || [ -f "$OLLAMA_ID_FILE" ]; then
+        stop_one "Ollama" "$OLLAMA_PID_FILE" "$OLLAMA_ID_FILE" || failed=1
+    elif curl -fsS --connect-timeout 1 --max-time 2         "$OLLAMA_URL/api/tags" >/dev/null 2>&1; then
+        echo "↷ Ollama left running: externally managed."
     else
-        echo "✗ Cannot stop Ollama: controller ownership state is missing." >&2
-        ownership_missing=1
+        echo "↷ Ollama not running under controller ownership."
     fi
 
-    if [ "$ownership_missing" -ne 0 ]; then
-        echo "PROJECT-NAS runtime: STOPPED WITH OWNERSHIP ERRORS" >&2
+    if [ "$failed" -ne 0 ]; then
+        echo "PROJECT-NAS runtime: STOPPED WITH ERRORS" >&2
         return 1
     fi
 
@@ -155,10 +226,10 @@ status_runtime() {
         echo "✗ Memory API  unavailable"
     fi
 
-    if pid_is_running "$MEMORY_PID_FILE"; then
+    if process_identity_matches "$MEMORY_PID_FILE" "$MEMORY_ID_FILE"; then
         echo "✓ Controller  memory PID $(cat "$MEMORY_PID_FILE")"
     fi
-    if pid_is_running "$OLLAMA_PID_FILE"; then
+    if process_identity_matches "$OLLAMA_PID_FILE" "$OLLAMA_ID_FILE"; then
         echo "✓ Controller  Ollama PID $(cat "$OLLAMA_PID_FILE")"
     fi
 }
