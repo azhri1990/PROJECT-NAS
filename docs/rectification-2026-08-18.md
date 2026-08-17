@@ -12,6 +12,7 @@ Before adding new user-facing capabilities, the local orchestration path must be
 - Timeout/network failures must not silently select another model.
 - Non-object Ollama responses are rejected.
 - Successful model responses must contain a usable response field before being exposed upstream.
+- Model output has a deterministic character ceiling.
 
 ## Next build gate
 
