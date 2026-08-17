@@ -10,6 +10,12 @@ from runtime.tool_gateway import build_default_gateway
 
 app = FastAPI(title="PROJECT-NAS Local Backend")
 
+MAX_TODO_ID_CHARS = 128
+MAX_TODO_TITLE_CHARS = 500
+MAX_TODO_DESCRIPTION_CHARS = 4000
+MAX_TODO_STATUS_CHARS = 64
+ALLOWED_TODO_STATUSES = frozenset({"pending", "in_progress", "completed", "cancelled"})
+
 
 def resolve_session_db() -> str:
     configured = os.environ.get("PROJECT_NAS_SESSION_DB")
@@ -137,6 +143,59 @@ def health_report() -> dict[str, Any]:
     return {"status": status, "components": components}
 
 
+def _bounded_text(value: Any, field: str, maximum: int, *, required: bool = False) -> str | None:
+    if value is None:
+        if required:
+            raise HTTPException(status_code=400, detail=f"{field} is required")
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail=f"{field} must be a string")
+    value = value.strip()
+    if required and not value:
+        raise HTTPException(status_code=400, detail=f"{field} is required")
+    if len(value) > maximum:
+        raise HTTPException(status_code=413, detail=f"{field} exceeds maximum length of {maximum} characters")
+    return value
+
+
+def _validate_todo_create(item: Dict[str, Any]) -> dict[str, str | None]:
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+    allowed = {"id", "title", "description", "status"}
+    unsupported = set(item) - allowed
+    if unsupported:
+        raise HTTPException(status_code=400, detail=f"unsupported todo fields: {', '.join(sorted(unsupported))}")
+    todo_id = _bounded_text(item.get("id"), "id", MAX_TODO_ID_CHARS, required=True)
+    title = _bounded_text(item.get("title"), "title", MAX_TODO_TITLE_CHARS, required=True)
+    description = _bounded_text(item.get("description"), "description", MAX_TODO_DESCRIPTION_CHARS)
+    status = _bounded_text(item.get("status", "pending"), "status", MAX_TODO_STATUS_CHARS, required=True)
+    if status not in ALLOWED_TODO_STATUSES:
+        raise HTTPException(status_code=400, detail="status must be one of: pending, in_progress, completed, cancelled")
+    return {"id": todo_id, "title": title, "description": description, "status": status}
+
+
+def _validate_todo_update(item: Dict[str, Any]) -> dict[str, str | None]:
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+    allowed = {"title", "description", "status"}
+    unsupported = set(item) - allowed
+    if unsupported:
+        raise HTTPException(status_code=400, detail=f"unsupported todo fields: {', '.join(sorted(unsupported))}")
+    if not item:
+        raise HTTPException(status_code=400, detail="at least one todo field is required")
+    result: dict[str, str | None] = {}
+    if "title" in item:
+        result["title"] = _bounded_text(item["title"], "title", MAX_TODO_TITLE_CHARS, required=True)
+    if "description" in item:
+        result["description"] = _bounded_text(item["description"], "description", MAX_TODO_DESCRIPTION_CHARS)
+    if "status" in item:
+        status = _bounded_text(item["status"], "status", MAX_TODO_STATUS_CHARS, required=True)
+        if status not in ALLOWED_TODO_STATUSES:
+            raise HTTPException(status_code=400, detail="status must be one of: pending, in_progress, completed, cancelled")
+        result["status"] = status
+    return result
+
+
 TOOL_GATEWAY = build_default_gateway(run_git_info)
 
 
@@ -199,35 +258,31 @@ async def list_todos():
 
 @app.post("/todos")
 async def create_todo(item: Dict[str, Any]):
-    if "id" not in item or "title" not in item:
-        raise HTTPException(status_code=400, detail="id and title required")
+    validated = _validate_todo_create(item)
     conn = get_db_conn()
     try:
-        conn.execute("INSERT INTO todos (id, title, description, status) VALUES (?, ?, ?, ?)", (item["id"], item["title"], item.get("description"), item.get("status", "pending")))
+        conn.execute("INSERT INTO todos (id, title, description, status) VALUES (?, ?, ?, ?)", (validated["id"], validated["title"], validated["description"], validated["status"]))
         conn.commit()
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="todo with id already exists")
     finally:
         conn.close()
-    return {"created": True, "id": item["id"]}
+    return {"created": True, "id": validated["id"]}
 
 
 @app.put("/todos/{todo_id}")
 async def update_todo(todo_id: str, item: Dict[str, Any]):
+    todo_id = _bounded_text(todo_id, "todo_id", MAX_TODO_ID_CHARS, required=True)
+    validated = _validate_todo_update(item)
     conn = get_db_conn()
     try:
         if not conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone():
             raise HTTPException(status_code=404, detail="todo not found")
-        updates = []
-        params = []
-        for key in ("title", "description", "status"):
-            if key in item:
-                updates.append(f"{key} = ?")
-                params.append(item[key])
-        if updates:
-            params.append(todo_id)
-            conn.execute(f"UPDATE todos SET {', '.join(updates)}, updated_at = datetime('now') WHERE id = ?", params)
-            conn.commit()
+        updates = [f"{key} = ?" for key in validated]
+        params = list(validated.values())
+        params.append(todo_id)
+        conn.execute(f"UPDATE todos SET {', '.join(updates)}, updated_at = datetime('now') WHERE id = ?", params)
+        conn.commit()
     finally:
         conn.close()
     return {"updated": True, "id": todo_id}
