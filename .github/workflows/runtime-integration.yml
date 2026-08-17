@@ -1,0 +1,43 @@
+name: PROJECT-NAS Runtime Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  PYTHONDONTWRITEBYTECODE: "1"
+  PROJECT_NAS_DOCTOR_OFFLINE: "1"
+
+jobs:
+  runtime-integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Create isolated Python environment
+        run: |
+          python3 -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --upgrade pip
+          .ci-venv/bin/python -m pip install -r requirements-test.txt
+          .ci-venv/bin/python -m pip install -r requirements-runtime.txt
+
+      - name: Full regression
+        run: .ci-venv/bin/python -m pytest -q tests
+
+      - name: Runtime controller smoke
+        run: .ci-venv/bin/python -m pytest -q tests/test_runtime_controller.py
+
+      - name: Static runtime verification
+        run: |
+          bash -n runtime/project-nas.sh
+          .ci-venv/bin/python -m compileall -q runtime tests
+          git diff --check
+
+      - name: Doctor diagnostics
+        run: .ci-venv/bin/python runtime/doctor.py
