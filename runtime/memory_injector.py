@@ -92,7 +92,7 @@ class SQLiteMemoryCollection:
             "model": {"ollama", "llama"},
             "ai": {"ollama", "llama"},
             "local": {"locally"},
-            "ollama": {"model", "ai"},
+            "ollama": {"model", "ai", "llama"},
             "llama": {"model", "ai"},
         }
 
