@@ -24,7 +24,7 @@ def test_session_db_is_configurable(tmp_path, monkeypatch):
     assert backend.resolve_session_db() == str(db_path)
 
 
-def test_tool_endpoint_allows_repo_progress(monkeypatch):
+def test_tool_endpoint_denies_repo_progress(monkeypatch):
     backend = load_backend()
     monkeypatch.setattr(
         backend,
@@ -36,9 +36,7 @@ def test_tool_endpoint_allows_repo_progress(monkeypatch):
 
     response = client.post("/tools/repo.progress", json={"commits": 1})
 
-    assert response.status_code == 200
-    assert response.json()["branch"] == "test"
-    assert response.json()["recent_commits"] == ["one"]
+    assert response.status_code == 403
 
 
 def test_tool_endpoint_rejects_unknown_or_process_tool():
@@ -46,10 +44,10 @@ def test_tool_endpoint_rejects_unknown_or_process_tool():
     client = TestClient(backend.app)
 
     unknown = client.post("/tools/missing", json={})
-    assert unknown.status_code == 404
+    assert unknown.status_code == 403
 
     process = client.post("/tools/shell.run", json={"command": "whoami"})
-    assert process.status_code == 404
+    assert process.status_code == 403
 
 def test_custom_plugin_execution_is_disabled(tmp_path):
     backend = load_backend()

@@ -14,20 +14,20 @@ def test_registered_read_tool_executes_after_policy_check():
     gateway = ToolGateway()
     gateway.register(
         ToolSpec(
-            name="repo.progress",
+            name="status.progress",
             capability=Capability.READ_REPOSITORY,
             risk=RiskLevel.LOW,
             input_validator=identity,
             handler=identity,
         )
     )
-    assert gateway.execute("repo.progress", {"commits": 3}) == {"commits": 3}
+    assert gateway.execute("status.progress", {"commits": 3}) == {"commits": 3}
     assert gateway.audit_log[-1]["allowed"] is True
 
 
 def test_unknown_tool_is_rejected():
     with pytest.raises(KeyError):
-        ToolGateway().execute("missing", {})
+        ToolGateway().execute("status.missing", {})
 
 
 def test_denied_capability_never_calls_handler():
@@ -52,7 +52,7 @@ def test_invalid_payload_is_rejected_before_handler():
     gateway = ToolGateway()
     gateway.register(
         ToolSpec(
-            name="validated",
+            name="memory.validated",
             capability=Capability.READ_RUNTIME,
             risk=RiskLevel.LOW,
             input_validator=lambda payload: (_ for _ in ()).throw(ValueError("bad payload")),
@@ -60,7 +60,7 @@ def test_invalid_payload_is_rejected_before_handler():
         )
     )
     with pytest.raises(ValueError, match="bad payload"):
-        gateway.execute("validated", {})
+        gateway.execute("memory.validated", {})
 
 
 def test_timeout_raises_without_returning_handler_result():
@@ -72,7 +72,7 @@ def test_timeout_raises_without_returning_handler_result():
 
     gateway.register(
         ToolSpec(
-            name="slow",
+            name="status.slow",
             capability=Capability.READ_RUNTIME,
             risk=RiskLevel.LOW,
             input_validator=identity,
@@ -80,27 +80,14 @@ def test_timeout_raises_without_returning_handler_result():
             timeout_seconds=0.01,
         )
     )
-    with pytest.raises(TimeoutError, match="tool timed out: slow"):
-        gateway.execute("slow", {})
-
-
-def test_default_gateway_exposes_only_bounded_repository_progress():
-    gateway = build_default_gateway(lambda commits: {"recent_commits": list(range(commits))})
-    result = gateway.execute("repo.progress", {"commits": 2})
-    assert result == {"recent_commits": [0, 1]}
-
-
-def test_progress_validator_rejects_arbitrary_git_arguments():
-    gateway = build_default_gateway(lambda commits: {"recent_commits": list(range(commits))})
-    for payload in ({"command": "git reset --hard"}, {"commits": 0}, {"commits": 51}):
-        with pytest.raises(ValueError):
-            gateway.execute("repo.progress", payload)
+    with pytest.raises(TimeoutError, match="tool timed out: status.slow"):
+        gateway.execute("status.slow", {})
 
 def test_write_repository_is_denied_by_default():
     gateway = ToolGateway()
     gateway.register(
         ToolSpec(
-            name="todo.create",
+            name="status.todo.create",
             capability=Capability.WRITE_REPOSITORY,
             risk=RiskLevel.MEDIUM,
             input_validator=identity,
@@ -109,7 +96,7 @@ def test_write_repository_is_denied_by_default():
     )
 
     with pytest.raises(PermissionError, match="write_repository"):
-        gateway.execute("todo.create", {"id": "x", "title": "blocked"})
+        gateway.execute("status.todo.create", {"id": "x", "title": "blocked"})
 
     assert gateway.audit_log[-1]["allowed"] is False
 
@@ -118,7 +105,7 @@ def test_network_access_is_denied_by_default():
     gateway = ToolGateway()
     gateway.register(
         ToolSpec(
-            name="network.call",
+            name="status.network.call",
             capability=Capability.NETWORK_ACCESS,
             risk=RiskLevel.HIGH,
             input_validator=identity,
@@ -127,6 +114,24 @@ def test_network_access_is_denied_by_default():
     )
 
     with pytest.raises(PermissionError, match="network_access"):
-        gateway.execute("network.call", {"url": "http://example.invalid"})
+        gateway.execute("status.network.call", {"url": "http://example.invalid"})
 
     assert gateway.audit_log[-1]["allowed"] is False
+
+
+@pytest.mark.parametrize("name", ["shell.run", "process.run", "plugin.load", "custom.test", "network.call", "repo.progress", "unknown.tool"])
+def test_non_allowlisted_namespaces_are_denied_before_handler(name):
+    called=[]
+    gateway=ToolGateway()
+    gateway.register(ToolSpec(name=name, capability=Capability.READ_RUNTIME, risk=RiskLevel.LOW, input_validator=lambda payload: called.append("validator") or payload, handler=lambda payload: called.append("handler") or payload))
+    with pytest.raises(PermissionError):
+        gateway.execute(name, {})
+    assert called == []
+    assert gateway.audit_log[-1]["allowed"] is False
+
+@pytest.mark.parametrize("name", ["memory.read", "prompt.get", "status.health"])
+def test_allowlisted_namespaces_are_permitted(name):
+    gateway=ToolGateway()
+    gateway.register(ToolSpec(name=name, capability=Capability.READ_RUNTIME, risk=RiskLevel.LOW, input_validator=identity, handler=identity))
+    assert gateway.execute(name, {"ok": True}) == {"ok": True}
+    assert gateway.audit_log[-1]["allowed"] is True

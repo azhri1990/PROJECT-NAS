@@ -18,7 +18,7 @@ class ToolSpec:
 
 class ToolGateway:
     """Registry and policy gate for bounded PROJECT-NAS tool execution."""
-
+    ALLOWED_NAMESPACES = frozenset({"memory", "prompt", "status"})
     def __init__(self, policy: PolicyEngine | None = None, audit_limit: int = 100):
         if audit_limit < 1:
             raise ValueError("audit_limit must be positive")
@@ -35,11 +35,19 @@ class ToolGateway:
         self._tools[spec.name] = spec
 
     def execute(self, name: str, payload: dict) -> Any:
+        namespace = name.split(".", 1)[0] if "." in name else ""
+
+        if namespace not in self.ALLOWED_NAMESPACES:
+            reason = f"tool namespace denied by default: {namespace or "<unknown>"}"
+            self._record_audit(name, False, reason)
+            raise PermissionError(reason)
+
         if name not in self._tools:
             raise KeyError(name)
 
         spec = self._tools[name]
         validated = spec.input_validator(payload)
+
         if not isinstance(validated, dict):
             raise ValueError("input validator must return an object")
 
@@ -49,13 +57,16 @@ class ToolGateway:
             risk=spec.risk,
             input=validated,
         )
+
         decision = self.policy.evaluate(request)
         self._record_audit(name, decision.allowed, decision.reason)
+
         if not decision.allowed:
             raise PermissionError(decision.reason)
 
         executor = ThreadPoolExecutor(max_workers=1)
         future = executor.submit(spec.handler, validated)
+
         try:
             result = future.result(timeout=spec.timeout_seconds)
         except FutureTimeoutError as exc:
@@ -63,21 +74,16 @@ class ToolGateway:
             executor.shutdown(wait=False, cancel_futures=True)
             raise TimeoutError(f"tool timed out: {name}") from exc
         except Exception:
-            executor.shutdown(wait=False, cancel_futures=True)
+            executor.shutdown(wait=True)
             raise
         else:
-            executor.shutdown(wait=True, cancel_futures=True)
-
-        try:
-            json.dumps(result)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("tool result must be JSON-serializable") from exc
-        return result
+            executor.shutdown(wait=True)
+            return result
 
     def _record_audit(self, name: str, allowed: bool, reason: str) -> None:
-        self.audit_log.append({"tool": name, "allowed": allowed, "reason": reason})
-        if len(self.audit_log) > self._audit_limit:
-            del self.audit_log[: len(self.audit_log) - self._audit_limit]
+            self.audit_log.append({"tool": name, "allowed": allowed, "reason": reason})
+            if len(self.audit_log) > self._audit_limit:
+                del self.audit_log[: len(self.audit_log) - self._audit_limit]
 
 
 def _validate_progress(payload: dict) -> dict:
