@@ -1,0 +1,1 @@
+Certification scope is intentionally narrow: prove runtime lifecycle, health, chat, doctor, stop, and loopback-only dependencies. Real Termux/Ollama validation remains a device gate.
