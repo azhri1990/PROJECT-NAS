@@ -1,0 +1,1 @@
+Automated runtime certification is staged on a fresh branch from current main. Merge only after its workflow is green; real-device validation remains mandatory for final operational certification.
