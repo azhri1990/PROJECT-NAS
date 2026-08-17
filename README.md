@@ -30,6 +30,25 @@ PROJECT-NAS
 └── Tests + CI + diagnostics
 ```
 
+## Installation
+
+Create the virtual environment and install the canonical developer dependency set:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+`requirements.txt` is the single developer entrypoint and includes the runtime and test requirement files. CI installs those split files directly so runtime-only and test-only environments remain independently reproducible.
+
+For a minimal mobile/Termux runtime environment, use:
+
+```bash
+pip install -r requirements-runtime-mobile.txt
+```
+
 ## Local runtime
 
 Default local services:
