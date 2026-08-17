@@ -17,9 +17,15 @@ def test_registered_read_tool_executes_after_policy_check():
     assert gateway.audit_log[-1]["allowed"] is True
 
 
-def test_unknown_tool_is_rejected():
+def test_unknown_tool_is_rejected_and_audited():
+    gateway = ToolGateway()
     with pytest.raises(KeyError):
-        ToolGateway().execute("status.missing", {})
+        gateway.execute("status.missing", {})
+    assert gateway.audit_log[-1] == {
+        "tool": "status.missing",
+        "allowed": False,
+        "reason": "unknown tool denied",
+    }
 
 
 def test_denied_capability_never_calls_handler():
