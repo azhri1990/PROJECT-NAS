@@ -71,7 +71,7 @@ class SQLiteMemoryCollection:
     @staticmethod
     def _expand_tokens(tokens):
         expanded = set(tokens)
-        aliases = {"model": {"ollama", "llama"}, "ai": {"ollama", "llama"}, "local": {"locally"}, "ollama": {"model", "ai", "llama"}, "llama": {"model", "ai"}}
+        aliases = {"model": {"ollama", "llama"}, "ai": {"ollama", "llama"}, "local": {"locally"}, "ollama": {"model", "ai", "llama"}, "llama": {"model", "ai", "ollama"}}
         for token in list(tokens):
             expanded.update(aliases.get(token, set()))
         return expanded
@@ -248,6 +248,13 @@ def select_local_model(configured, available):
     return available[0]
 
 
+def resolve_local_model(configured=None, base_url=None):
+    """Resolve the best local model before issuing a generation request."""
+    configured = configured or MODEL_NAME
+    available = discover_local_models(base_url)
+    return select_local_model(configured, available) or configured
+
+
 def _is_model_not_found(exc):
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
@@ -317,7 +324,8 @@ def redact_memory_text(text):
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "model": MODEL_NAME, "ollama_url": OLLAMA_URL, "memory_backend": MEMORY_BACKEND})
+    selected = resolve_local_model()
+    return jsonify({"status": "ok", "model": selected, "configured_model": MODEL_NAME, "ollama_url": OLLAMA_URL, "memory_backend": MEMORY_BACKEND})
 
 
 def should_persist_memory(prompt):
@@ -351,22 +359,29 @@ def chat():
         return jsonify({"error": "Ollama URL must point to a local loopback address."}), 503
     memory_context = retrieve_context(user_prompt)
     full_prompt, _budget = build_context(static_context, memory_context, user_prompt)
-    selected_model = MODEL_NAME
+    selected_model = resolve_local_model()
     try:
-        try:
-            payload_response = _model_request(OLLAMA_URL, selected_model, full_prompt)
-        except requests.exceptions.HTTPError as exc:
-            if not _is_model_not_found(exc):
-                raise
-            available = discover_local_models(OLLAMA_BASE_URL)
-            selected_model = select_local_model(MODEL_NAME, available)
-            if selected_model is None:
-                return jsonify({"error": "Configured local model is unavailable and no fallback model was found."}), 503
-            payload_response = _model_request(OLLAMA_URL, selected_model, full_prompt)
+        payload_response = _model_request(OLLAMA_URL, selected_model, full_prompt)
         ai_response = payload_response.get("response") if isinstance(payload_response, dict) else None
         if not isinstance(ai_response, str):
             return jsonify({"error": "Ollama returned no valid 'response' field."}), 502
         ai_response = ai_response[:MAX_RESPONSE_CHARS]
+    except requests.exceptions.HTTPError as exc:
+        if not _is_model_not_found(exc):
+            return jsonify({"error": f"Local LLM request failed: {exc}"}), 502
+        available = discover_local_models(OLLAMA_BASE_URL)
+        fallback = select_local_model(selected_model, available)
+        if fallback is None or fallback == selected_model:
+            return jsonify({"error": "Selected local model is unavailable and no fallback model was found."}), 503
+        try:
+            payload_response = _model_request(OLLAMA_URL, fallback, full_prompt)
+            ai_response = payload_response.get("response") if isinstance(payload_response, dict) else None
+            if not isinstance(ai_response, str):
+                return jsonify({"error": "Ollama returned no valid 'response' field."}), 502
+            ai_response = ai_response[:MAX_RESPONSE_CHARS]
+            selected_model = fallback
+        except requests.exceptions.RequestException as retry_exc:
+            return jsonify({"error": f"Local LLM fallback request failed: {retry_exc}"}), 502
     except requests.exceptions.RequestException as exc:
         return jsonify({"error": f"Local LLM request failed: {exc}"}), 502
     except (ValueError, TypeError) as exc:
@@ -376,7 +391,7 @@ def chat():
             _persist_memory(user_prompt, ai_response)
         except Exception as exc:
             print(f"Warning: failed to save memory: {exc}")
-    return jsonify({"response": ai_response})
+    return jsonify({"response": ai_response, "model": selected_model})
 
 
 if __name__ == "__main__":
