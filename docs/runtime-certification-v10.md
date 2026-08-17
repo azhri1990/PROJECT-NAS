@@ -1,0 +1,1 @@
+Merge gate: runtime-smoke workflow green. Final operational green: runtime-smoke green plus real Termux/Ollama smoke.
