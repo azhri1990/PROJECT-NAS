@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 import uuid
 from ipaddress import ip_address
 from urllib.parse import urlparse
@@ -22,6 +23,7 @@ OLLAMA_URL = os.environ.get("PROJECT_NAS_OLLAMA_URL", "http" + chr(58) + chr(47)
 OLLAMA_BASE_URL = os.environ.get("PROJECT_NAS_OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 MODEL_NAME = os.environ.get("PROJECT_NAS_OLLAMA_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = float(os.environ.get("PROJECT_NAS_OLLAMA_TIMEOUT", "75"))
+MODEL_DISCOVERY_TTL = float(os.environ.get("PROJECT_NAS_MODEL_DISCOVERY_TTL", "30"))
 MEMORY_LIMIT = int(os.environ.get("PROJECT_NAS_MEMORY_LIMIT", "2"))
 MAX_MEMORY_CHARS = int(os.environ.get("PROJECT_NAS_MAX_MEMORY_CHARS", "3000"))
 MAX_PROMPT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_PROMPT_CHARS", "12000"))
@@ -29,6 +31,7 @@ MAX_CONTEXT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_CONTEXT_CHARS", "12000")
 MAX_RESPONSE_CHARS = int(os.environ.get("PROJECT_NAS_MAX_RESPONSE_CHARS", "12000"))
 MAX_TOTAL_PROMPT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_TOTAL_PROMPT_CHARS", "24000"))
 MAX_PERSISTED_MEMORIES = int(os.environ.get("PROJECT_NAS_MAX_PERSISTED_MEMORIES", "500"))
+_MODEL_CACHE = {"base_url": None, "expires_at": 0.0, "models": ()}
 
 
 class SQLiteMemoryCollection:
@@ -251,7 +254,14 @@ def select_local_model(configured, available):
 def resolve_local_model(configured=None, base_url=None):
     """Resolve the best local model before issuing a generation request."""
     configured = configured or MODEL_NAME
-    available = discover_local_models(base_url)
+    base_url = base_url or OLLAMA_BASE_URL
+    now = time.monotonic()
+    if MODEL_DISCOVERY_TTL > 0 and _MODEL_CACHE["base_url"] == base_url and now < _MODEL_CACHE["expires_at"]:
+        available = list(_MODEL_CACHE["models"])
+    else:
+        available = discover_local_models(base_url)
+        if MODEL_DISCOVERY_TTL > 0:
+            _MODEL_CACHE.update({"base_url": base_url, "expires_at": now + MODEL_DISCOVERY_TTL, "models": tuple(available)})
     return select_local_model(configured, available) or configured
 
 
