@@ -15,9 +15,9 @@ def test_runtime_certifier_has_all_required_gates():
     text = CERTIFIER.read_text(encoding="utf-8")
     for marker in (
         'runtime/doctor.py',
-        'BACKEND_HEALTH_URL',
-        'MEMORY_HEALTH_URL',
-        'OLLAMA_BASE_URL',
+        'PROJECT_NAS_BACKEND_HEALTH_URL',
+        'PROJECT_NAS_MEMORY_HEALTH_URL',
+        'PROJECT_NAS_OLLAMA_BASE_URL',
         'compileall',
         'bash -n',
         'git -C "$PROJECT_ROOT" diff --check',
