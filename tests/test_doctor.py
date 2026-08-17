@@ -37,31 +37,34 @@ def test_doctor_reports_unreachable_ollama_without_crashing(monkeypatch):
     assert "unreachable" in result.detail
 
 
+def test_doctor_offline_mode_skips_local_llm_probe(monkeypatch):
+    doctor = load_doctor()
+    monkeypatch.setenv("PROJECT_NAS_DOCTOR_OFFLINE", "1")
+    result = doctor.check_ollama()
+    assert result.ok
+    assert "offline verification mode" in result.detail
+
+
 def test_doctor_accepts_sqlite_memory_fallback(monkeypatch):
     doctor = load_doctor()
-
-    monkeypatch.setattr(
-        doctor.importlib.util,
-        "find_spec",
-        lambda name: None if name == "chromadb" else object(),
-    )
-
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: None if name == "chromadb" else object())
     result = doctor.check_memory_backend()
-
     assert result.ok
     assert "SQLite fallback" in result.detail
 
 
 def test_doctor_accepts_chromadb_when_available(monkeypatch):
     doctor = load_doctor()
-
-    monkeypatch.setattr(
-        doctor.importlib.util,
-        "find_spec",
-        lambda name: object() if name == "chromadb" else None,
-    )
-
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object() if name == "chromadb" else None)
     result = doctor.check_memory_backend()
-
     assert result.ok
     assert result.detail == "ChromaDB available"
+
+
+def test_doctor_skips_sqlite_store_requirement_when_chromadb_is_active(monkeypatch, tmp_path):
+    doctor = load_doctor()
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object() if name == "chromadb" else None)
+    monkeypatch.setenv("PROJECT_NAS_MEMORY_DB", str(tmp_path / "missing"))
+    result = doctor.check_memory_database()
+    assert result.ok
+    assert "ChromaDB store active" in result.detail
