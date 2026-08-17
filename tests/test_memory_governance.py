@@ -13,11 +13,11 @@ def load_module():
 def test_context_budget_is_deterministic(monkeypatch, tmp_path):
     monkeypatch.setenv("PROJECT_NAS_MEMORY_DB", str(tmp_path / "memory"))
     module = load_module()
-    module.MAX_TOTAL_PROMPT_CHARS = 200
+    module.MAX_TOTAL_PROMPT_CHARS = 4096
 
-    prompt, meta = module.build_context("S" * 200, "M" * 200, "hello")
-    assert len(prompt) <= 200
-    assert meta["budget_chars"] == 200
+    prompt, meta = module.build_context("S" * 5000, "M" * 5000, "hello")
+    assert len(prompt) <= 4096
+    assert meta["budget_chars"] == 4096
     assert meta["static_truncated"] is True
     assert meta["memory_truncated"] is True
 
