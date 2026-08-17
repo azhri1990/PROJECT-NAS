@@ -132,6 +132,9 @@ class LocalModelRouter:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status not in {400, 404}:
                 raise
+        except (requests.ConnectionError, requests.Timeout):
+            pass
+
         route = self.discover_route()
         if route.selected is None:
             raise RuntimeError("configured local model is unavailable and no fallback model was found")
