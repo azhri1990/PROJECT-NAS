@@ -47,8 +47,7 @@ def test_chat_end_to_end_with_ollama_compatible_http(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.get_json() == {"response": "hello from local model"}
-    assert len(collection.saved) == 1
-    assert "hello" in collection.saved[0]["documents"][0]
+    assert collection.saved == []
 
 
 def test_health_exposes_configured_local_ollama_endpoint(monkeypatch, tmp_path):

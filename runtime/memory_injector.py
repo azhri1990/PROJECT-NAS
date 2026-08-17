@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import uuid
 from ipaddress import ip_address
@@ -47,21 +48,135 @@ class SQLiteMemoryCollection:
             )
             conn.commit()
 
+    @staticmethod
+    def _tokens(text):
+        """Normalize text into lightweight retrieval tokens."""
+        text = text.lower()
+        text = re.sub(r"[^a-z0-9_.:+-]+", " ", text)
+
+        stop_words = {
+            "a", "an", "and", "are", "as", "at", "be", "by",
+            "does", "for", "from", "has", "have", "how", "i",
+            "in", "is", "it", "of", "on", "or", "that", "the",
+            "this", "to", "what", "which", "with", "who", "where",
+        }
+
+        tokens = []
+
+        for token in text.split():
+            if token in stop_words:
+                continue
+
+            if token.endswith("ally") and len(token) > 7:
+                token = token[:-5] + "al"
+            elif token.endswith("ing") and len(token) > 5:
+                token = token[:-3]
+            elif token.endswith("es") and len(token) > 4:
+                token = token[:-2]
+            elif token.endswith("s") and len(token) > 3:
+                token = token[:-1]
+
+            tokens.append(token)
+
+        return tokens
+
+    @staticmethod
+    def _expand_tokens(tokens):
+        """Add small deterministic concept expansions for local retrieval."""
+        expanded = set(tokens)
+
+        aliases = {
+            "model": {"ollama", "llama"},
+            "ai": {"ollama", "llama"},
+            "local": {"locally"},
+            "ollama": {"model", "ai"},
+            "llama": {"model", "ai"},
+        }
+
+        for token in list(tokens):
+            expanded.update(aliases.get(token, set()))
+
+        return expanded
+
     def query(self, query_texts, n_results=MEMORY_LIMIT):
         query = (query_texts or [""])[0].strip()
+
         with sqlite3.connect(self.db_file) as conn:
-            if query:
-                rows = conn.execute(
-                    "SELECT document FROM memories WHERE document LIKE ? "
-                    "ORDER BY rowid DESC LIMIT ?",
-                    (f"%{query}%", n_results),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT document FROM memories ORDER BY rowid DESC LIMIT ?",
-                    (n_results,),
-                ).fetchall()
-        return {"documents": [[row[0] for row in rows]]}
+            rows = conn.execute(
+                "SELECT rowid, document FROM memories ORDER BY rowid DESC"
+            ).fetchall()
+
+        if not rows:
+            return {"documents": [[]]}
+
+        if not query:
+            return {
+                "documents": [[
+                    document for _, document in rows[:n_results]
+                ]]
+            }
+
+        query_tokens = self._expand_tokens(self._tokens(query))
+
+        if not query_tokens:
+            return {"documents": [[]]}
+
+        scored = []
+
+        for rowid, document in rows:
+            document_tokens = self._expand_tokens(
+                self._tokens(document)
+            )
+
+            overlap = query_tokens & document_tokens
+
+            if not overlap:
+                continue
+
+            # Ignore generic repository identifiers when ranking.
+            meaningful_overlap = {
+                token for token in overlap
+                if token not in {"project-nas"}
+            }
+
+            if not meaningful_overlap:
+                continue
+
+            score = len(meaningful_overlap)
+
+            # Give technical/model terms substantially more weight.
+            technical_terms = {
+                "ollama",
+                "llama",
+                "llama3.2:3b",
+                "model",
+                "ai",
+                "sqlite",
+                "chromadb",
+                "termux",
+                "android",
+            }
+
+            score += sum(
+                2 for token in meaningful_overlap
+                if token in technical_terms
+            )
+
+            # Prefer documents containing distinctive query concepts.
+            score += len(
+                meaningful_overlap & set(self._tokens(query))
+            ) * 1.5
+
+            scored.append((score, rowid, document))
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+        return {
+            "documents": [[
+                document
+                for _, _, document in scored[:n_results]
+            ]]
+        }
 
     def add(self, documents, metadatas=None, ids=None):
         documents = documents or []
@@ -83,6 +198,12 @@ if chromadb is not None:
 else:
     collection = SQLiteMemoryCollection(DB_PATH)
     MEMORY_BACKEND = "sqlite"
+
+RUNTIME_FACTS = (
+    f"PROJECT-NAS configured local AI model: {MODEL_NAME}\n"
+    f"PROJECT-NAS Ollama endpoint: {OLLAMA_URL}\n"
+    f"PROJECT-NAS memory backend: {MEMORY_BACKEND}"
+)
 
 
 def is_loopback_ollama_url(url):
@@ -110,7 +231,7 @@ def is_loopback_ollama_url(url):
 def retrieve_context(query_text):
     """Search the configured memory backend for relevant past memories."""
     try:
-        results = collection.query(query_texts=[query_text], n_results=3)
+        results = collection.query(query_texts=[query_text], n_results=MEMORY_LIMIT)
     except Exception as exc:
         print(f"Warning: memory retrieval failed: {exc}")
         return ""
@@ -135,6 +256,28 @@ def health():
         "ollama_url": OLLAMA_URL,
         "memory_backend": MEMORY_BACKEND,
     })
+
+
+def should_persist_memory(prompt):
+    """Return True only when the user explicitly requests long-term memory."""
+    normalized = " ".join(prompt.lower().split())
+
+    memory_triggers = (
+        "remember that",
+        "remember this",
+        "remember:",
+        "save this",
+        "save that",
+        "save to memory",
+        "store this",
+        "store that",
+        "keep this in memory",
+        "keep in mind",
+        "make a note that",
+        "memorize this",
+    )
+
+    return any(trigger in normalized for trigger in memory_triggers)
 
 
 @app.route("/chat", methods=["POST"])
@@ -173,11 +316,17 @@ def chat():
         "Answer the user's request directly and concisely. "
         "Follow exact-output requests literally. "
         "Do not add commentary when the user requests an exact response. "
-        "Prioritize reliability and brevity on mobile."
+        "Prioritize reliability and brevity on mobile. "
+        "Authoritative runtime facts override retrieved memory. "
+        "Retrieved memory is contextual and may be stale or incorrect. "
+        "Never treat a previous AI response as authoritative configuration."
     )
 
     full_prompt = (
         f"[SYSTEM INSTRUCTION]: {system_instruction}\n"
+        f"[AUTHORITATIVE RUNTIME FACTS]\n"
+        f"{RUNTIME_FACTS}\n"
+        f"[END AUTHORITATIVE RUNTIME FACTS]\n"
         f"{static_context}\n"
         f"{memory_context}\n"
         f"[USER INPUT]: {user_prompt}"
@@ -206,14 +355,17 @@ def chat():
     except (ValueError, TypeError) as exc:
         return jsonify({"error": f"Invalid response from local LLM: {exc}"}), 502
 
-    try:
-        collection.add(
-            documents=[f"User asked: {user_prompt}\nAI replied: {ai_response}"],
-            metadatas=[{"timestamp": "session_auto"}],
-            ids=[f"mem_{uuid.uuid4()}"]
-        )
-    except Exception as exc:
-        print(f"Warning: failed to save memory: {exc}")
+    if should_persist_memory(user_prompt):
+        try:
+            collection.add(
+                documents=[
+                    f"User asked: {user_prompt}\nAI replied: {ai_response}"
+                ],
+                metadatas=[{"timestamp": "explicit_user_memory"}],
+                ids=[f"mem_{uuid.uuid4()}"]
+            )
+        except Exception as exc:
+            print(f"Warning: failed to save memory: {exc}")
 
     return jsonify({"response": ai_response})
 

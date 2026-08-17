@@ -108,6 +108,4 @@ def test_chat_truncates_oversized_model_response(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert len(response.get_json()["response"]) == 20
-    assert len(collection.saved) == 1
-    saved = collection.saved[0]["documents"][0]
-    assert len(saved) <= 20 + len("User asked: hello\nAI replied: ")
+    assert collection.saved == []
