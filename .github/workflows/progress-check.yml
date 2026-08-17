@@ -11,6 +11,9 @@ env:
   PYTHONPATH: ${{ github.workspace }}
   PYTHONDONTWRITEBYTECODE: "1"
 
+authentication:
+  contents: read
+
 jobs:
   progress-check:
     runs-on: ubuntu-latest
@@ -59,11 +62,12 @@ jobs:
           python runtime/progress.py --commits 5 > progress.json
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           payload = json.loads(Path("progress.json").read_text(encoding="utf-8"))
           repo = payload["repo"]
-          assert repo["branch"] == "${GITHUB_REF_NAME}"
+          assert repo["branch"] == os.environ["GITHUB_REF_NAME"]
           assert repo["recent_commits"]
           print(f"CI progress check OK: branch={repo['branch']}, commits={len(repo['recent_commits'])}")
           PY
