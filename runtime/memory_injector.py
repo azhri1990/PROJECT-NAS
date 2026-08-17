@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import uuid
+from ipaddress import ip_address
+from urllib.parse import urlparse
 
 import requests
 from flask import Flask, jsonify, request
@@ -20,6 +22,9 @@ MODEL_NAME = os.environ.get("PROJECT_NAS_OLLAMA_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = float(os.environ.get("PROJECT_NAS_OLLAMA_TIMEOUT", "75"))
 MEMORY_LIMIT = int(os.environ.get("PROJECT_NAS_MEMORY_LIMIT", "2"))
 MAX_MEMORY_CHARS = int(os.environ.get("PROJECT_NAS_MAX_MEMORY_CHARS", "3000"))
+MAX_PROMPT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_PROMPT_CHARS", "12000"))
+MAX_CONTEXT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_CONTEXT_CHARS", "12000"))
+MAX_RESPONSE_CHARS = int(os.environ.get("PROJECT_NAS_MAX_RESPONSE_CHARS", "12000"))
 
 
 class SQLiteMemoryCollection:
@@ -80,6 +85,28 @@ else:
     MEMORY_BACKEND = "sqlite"
 
 
+def is_loopback_ollama_url(url):
+    """Allow Ollama connections only to local loopback addresses."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+
+        if hostname.lower() == "localhost":
+            return True
+
+        try:
+            return ip_address(hostname).is_loopback
+        except ValueError:
+            return False
+    except Exception:
+        return False
+
+
 def retrieve_context(query_text):
     """Search the configured memory backend for relevant past memories."""
     try:
@@ -124,6 +151,21 @@ def chat():
     if not isinstance(static_context, str):
         return jsonify({"error": "'context' must be a string."}), 400
 
+    if len(user_prompt) > MAX_PROMPT_CHARS:
+        return jsonify({
+            "error": f"prompt exceeds maximum length of {MAX_PROMPT_CHARS} characters."
+        }), 413
+
+    if len(static_context) > MAX_CONTEXT_CHARS:
+        return jsonify({
+            "error": f"context exceeds maximum length of {MAX_CONTEXT_CHARS} characters."
+        }), 413
+
+    if not is_loopback_ollama_url(OLLAMA_URL):
+        return jsonify({
+            "error": "Ollama URL must point to a local loopback address."
+        }), 503
+
     memory_context = retrieve_context(user_prompt)
 
     system_instruction = (
@@ -157,6 +199,8 @@ def chat():
         ai_response = response.json().get("response")
         if not isinstance(ai_response, str):
             return jsonify({"error": "Ollama returned no valid 'response' field."}), 502
+
+        ai_response = ai_response[:MAX_RESPONSE_CHARS]
     except requests.exceptions.RequestException as exc:
         return jsonify({"error": f"Local LLM request failed: {exc}"}), 502
     except (ValueError, TypeError) as exc:
