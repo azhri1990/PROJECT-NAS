@@ -82,17 +82,58 @@ def check_memory_backend() -> Check:
         return Check("Memory backend", False, f"no usable backend: {exc}")
 
 
-def check_database() -> Check:
+def resolve_memory_db() -> Path:
+    configured = os.getenv("PROJECT_NAS_MEMORY_DB")
+    if configured:
+        path = Path(configured).expanduser()
+        if path.suffix:
+            return path
+        return path / "memory.sqlite3"
+    return ROOT / "runtime" / "claude-mem-db" / "memory.sqlite3"
+
+
+def check_memory_database() -> Check:
+    path = resolve_memory_db()
+    if not path.is_file():
+        return Check("Memory store", False, f"missing: {path.relative_to(ROOT)}")
+
+    try:
+        with sqlite3.connect(path) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+
+            if "memories" not in tables:
+                return Check(
+                    "Memory store",
+                    False,
+                    f"missing memories table: {path.relative_to(ROOT)}",
+                )
+
+            count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+
+        return Check(
+            "Memory store",
+            True,
+            f"{path.relative_to(ROOT)} ({count} records)",
+        )
+    except (OSError, sqlite3.Error) as exc:
+        return Check("Memory store", False, str(exc))
+
+
+def check_session_database() -> Check:
     configured = os.getenv("PROJECT_NAS_SESSION_DB")
     path = Path(configured).expanduser() if configured else ROOT / "session.db"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(path)
-        conn.execute("SELECT 1")
-        conn.close()
-        return Check("Database", True, str(path))
+        with sqlite3.connect(path) as conn:
+            conn.execute("SELECT 1")
+        return Check("Session store", True, str(path.relative_to(ROOT)))
     except (OSError, sqlite3.Error) as exc:
-        return Check("Database", False, str(exc))
+        return Check("Session store", False, str(exc))
 
 
 def check_prompt() -> Check:
@@ -123,7 +164,8 @@ def run() -> int:
         check_module("fastapi"),
         check_module("requests"),
         check_memory_backend(),
-        check_database(),
+        check_memory_database(),
+        check_session_database(),
         check_prompt(),
         check_ollama(),
     ]
