@@ -11,9 +11,6 @@ env:
   PYTHONPATH: ${{ github.workspace }}
   PYTHONDONTWRITEBYTECODE: "1"
 
-authentication:
-  contents: read
-
 jobs:
   progress-check:
     runs-on: ubuntu-latest
