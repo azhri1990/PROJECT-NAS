@@ -9,6 +9,11 @@ MAX_MEMORY_QUERY_CHARS = 500
 MAX_PROMPT_CHARS = 12000
 MAX_PROMPT_RESPONSE_CHARS = 12000
 MAX_PROGRESS_COMMITS = 50
+MAX_TODO_ID_CHARS = 128
+MAX_TODO_TITLE_CHARS = 500
+MAX_TODO_DESCRIPTION_CHARS = 5000
+MAX_TODO_LIST_LIMIT = 100
+TODO_STATUSES = frozenset({"pending", "in_progress", "done", "cancelled"})
 
 
 @dataclass(frozen=True)
@@ -24,7 +29,7 @@ class ToolSpec:
 class ToolGateway:
     """Registry and policy gate for bounded PROJECT-NAS tool execution."""
 
-    ALLOWED_NAMESPACES = frozenset({"memory", "prompt", "status"})
+    ALLOWED_NAMESPACES = frozenset({"memory", "prompt", "status", "todo"})
 
     def __init__(self, policy: PolicyEngine | None = None, audit_limit: int = 100):
         if audit_limit < 1:
@@ -139,13 +144,76 @@ def _validate_prompt(payload: dict) -> dict:
     return {"max_chars": max_chars}
 
 
+def _bounded_string(payload: dict, field: str, maximum: int, required: bool = False) -> str | None:
+    value = payload.get(field)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    value = value.strip()
+    if required and not value:
+        raise ValueError(f"{field} must be a non-empty string")
+    if len(value) > maximum:
+        raise ValueError(f"{field} exceeds maximum length of {maximum} characters")
+    return value
+
+
+def _validate_todo_create(payload: dict) -> dict:
+    payload = _require_object(payload)
+    if set(payload) - {"id", "title", "description", "status"}:
+        raise ValueError("unsupported todo arguments")
+    todo_id = _bounded_string(payload, "id", MAX_TODO_ID_CHARS, required=True)
+    title = _bounded_string(payload, "title", MAX_TODO_TITLE_CHARS, required=True)
+    description = _bounded_string(payload, "description", MAX_TODO_DESCRIPTION_CHARS)
+    status = payload.get("status", "pending")
+    if not isinstance(status, str) or status not in TODO_STATUSES:
+        raise ValueError("status must be one of: pending, in_progress, done, cancelled")
+    return {"id": todo_id, "title": title, "description": description, "status": status}
+
+
+def _validate_todo_update(payload: dict) -> dict:
+    payload = _require_object(payload)
+    if set(payload) - {"id", "title", "description", "status"}:
+        raise ValueError("unsupported todo arguments")
+    todo_id = _bounded_string(payload, "id", MAX_TODO_ID_CHARS, required=True)
+    if not any(field in payload for field in ("title", "description", "status")):
+        raise ValueError("todo update requires at least one mutable field")
+    result: dict[str, Any] = {"id": todo_id}
+    if "title" in payload:
+        result["title"] = _bounded_string(payload, "title", MAX_TODO_TITLE_CHARS, required=True)
+    if "description" in payload:
+        result["description"] = _bounded_string(payload, "description", MAX_TODO_DESCRIPTION_CHARS)
+    if "status" in payload:
+        status = payload["status"]
+        if not isinstance(status, str) or status not in TODO_STATUSES:
+            raise ValueError("status must be one of: pending, in_progress, done, cancelled")
+        result["status"] = status
+    return result
+
+
+def _validate_todo_list(payload: dict) -> dict:
+    payload = _require_object(payload)
+    if set(payload) - {"limit"}:
+        raise ValueError("unsupported todo list arguments")
+    limit = payload.get("limit", MAX_TODO_LIST_LIMIT)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_TODO_LIST_LIMIT:
+        raise ValueError("limit must be an integer from 1 to 100")
+    return {"limit": limit}
+
+
 def build_default_gateway(progress_handler: Callable[[int], dict] | None = None) -> ToolGateway:
-    """Create the bounded read-only v1 control plane."""
+    """Create the bounded local control plane."""
     if progress_handler is None:
         from runtime.backend import run_git_info
         progress_handler = run_git_info
 
-    from runtime.backend import read_prompt, health_report
+    from runtime.backend import (
+        create_todo_record,
+        health_report,
+        list_todo_records,
+        read_prompt,
+        update_todo_record,
+    )
     from runtime.memory_injector import read_memories
 
     gateway = ToolGateway()
@@ -176,5 +244,26 @@ def build_default_gateway(progress_handler: Callable[[int], dict] | None = None)
         risk=RiskLevel.LOW,
         input_validator=_validate_memory,
         handler=lambda payload: read_memories(payload["query"], payload["limit"]),
+    ))
+    gateway.register(ToolSpec(
+        name="todo.create",
+        capability=Capability.WRITE_SESSION,
+        risk=RiskLevel.LOW,
+        input_validator=_validate_todo_create,
+        handler=create_todo_record,
+    ))
+    gateway.register(ToolSpec(
+        name="todo.update",
+        capability=Capability.WRITE_SESSION,
+        risk=RiskLevel.LOW,
+        input_validator=_validate_todo_update,
+        handler=update_todo_record,
+    ))
+    gateway.register(ToolSpec(
+        name="todo.list",
+        capability=Capability.READ_RUNTIME,
+        risk=RiskLevel.LOW,
+        input_validator=_validate_todo_list,
+        handler=list_todo_records,
     ))
     return gateway
