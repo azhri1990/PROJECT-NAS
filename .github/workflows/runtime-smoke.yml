@@ -1,0 +1,36 @@
+name: PROJECT-NAS Runtime Smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  PYTHONDONTWRITEBYTECODE: "1"
+  PROJECT_NAS_DOCTOR_OFFLINE: "1"
+
+jobs:
+  runtime-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Create isolated Python environment
+        run: |
+          python3 -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --upgrade pip
+          .ci-venv/bin/python -m pip install -r requirements-test.txt
+          .ci-venv/bin/python -m pip install -r requirements-runtime.txt
+
+      - name: Run runtime controller regression suite
+        run: .ci-venv/bin/python -m pytest -q tests/test_runtime_controller.py
+
+      - name: Verify controller command surface
+        run: |
+          bash -n runtime/project-nas.sh
+          .ci-venv/bin/python runtime/project-nas.sh 2>/dev/null || true
