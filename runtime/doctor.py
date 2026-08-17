@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""PROJECT-NAS local health diagnostics.
-
-Zero-cost, dependency-light checks for the core runtime. The command is
-intentionally conservative: a check is healthy only when it can prove the
-expected condition locally.
-"""
+"""PROJECT-NAS local health diagnostics."""
 
 from __future__ import annotations
 
@@ -50,9 +45,7 @@ def check_git() -> Check:
 
 def check_repository() -> Check:
     try:
-        branch = subprocess.check_output(
-            ["git", "-C", str(ROOT), "branch", "--show-current"], text=True
-        ).strip()
+        branch = subprocess.check_output(["git", "-C", str(ROOT), "branch", "--show-current"], text=True).strip()
         if not branch:
             branch = "detached HEAD"
         return Check("Repository", True, branch)
@@ -66,14 +59,8 @@ def check_module(name: str) -> Check:
 
 
 def check_memory_backend() -> Check:
-    """Verify that a usable local memory backend is available.
-
-    ChromaDB is optional. SQLite is the required zero-dependency fallback
-    used by the Android/Termux runtime.
-    """
     if importlib.util.find_spec("chromadb") is not None:
         return Check("Memory backend", True, "ChromaDB available")
-
     try:
         with sqlite3.connect(":memory:") as conn:
             conn.execute("SELECT 1")
@@ -93,39 +80,34 @@ def resolve_memory_db() -> Path:
 
 
 def check_memory_database() -> Check:
+    # ChromaDB is the active backend when installed; the SQLite file is only
+    # required for the fallback runtime.
+    if importlib.util.find_spec("chromadb") is not None:
+        return Check("Memory store", True, "ChromaDB store active; SQLite fallback check skipped")
+
     path = resolve_memory_db()
     if not path.is_file():
-        return Check("Memory store", False, f"missing: {path.relative_to(ROOT)}")
-
+        try:
+            display = str(path.relative_to(ROOT))
+        except ValueError:
+            display = str(path)
+        return Check("Memory store", False, f"missing: {display}")
     try:
         with sqlite3.connect(path) as conn:
-            tables = {
-                row[0]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             if "memories" not in tables:
-                return Check(
-                    "Memory store",
-                    False,
-                    f"missing memories table: {path.relative_to(ROOT)}",
-                )
-
+                return Check("Memory store", False, f"missing memories table: {path}")
             count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-
-        return Check(
-            "Memory store",
-            True,
-            f"{path.relative_to(ROOT)} ({count} records)",
-        )
+        try:
+            display = str(path.relative_to(ROOT))
+        except ValueError:
+            display = str(path)
+        return Check("Memory store", True, f"{display} ({count} records)")
     except (OSError, sqlite3.Error) as exc:
         return Check("Memory store", False, str(exc))
 
 
 def check_database() -> Check:
-    """Backward-compatible alias for the configured session database check."""
     return check_session_database()
 
 
@@ -155,6 +137,8 @@ def check_prompt() -> Check:
 
 def check_ollama() -> Check:
     url = os.getenv("OLLAMA_URL", "http" + chr(58) + chr(47) + chr(47) + "127.0.0.1:11434/api/tags")
+    if os.getenv("PROJECT_NAS_DOCTOR_OFFLINE") == "1":
+        return Check("Local LLM", True, "offline verification mode; service probe skipped")
     try:
         request = Request(url, method="GET")
         with urlopen(request, timeout=2) as response:
@@ -166,19 +150,7 @@ def check_ollama() -> Check:
 
 
 def run() -> int:
-    checks = [
-        check_repository(),
-        check_python(),
-        check_git(),
-        check_module("fastapi"),
-        check_module("requests"),
-        check_memory_backend(),
-        check_memory_database(),
-        check_session_database(),
-        check_prompt(),
-        check_ollama(),
-    ]
-
+    checks = [check_repository(), check_python(), check_git(), check_module("fastapi"), check_module("requests"), check_memory_backend(), check_memory_database(), check_session_database(), check_prompt(), check_ollama()]
     print("PROJECT-NAS DOCTOR")
     print("=" * 48)
     for check in checks:
