@@ -1,0 +1,1 @@
+This branch adds automated runtime lifecycle smoke coverage only. Do not call the repository fully operational until the real Termux/Ollama gate is also completed.
