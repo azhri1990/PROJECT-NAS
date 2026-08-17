@@ -156,9 +156,14 @@ def get_db_conn():
     return conn
 
 
+@app.get("/health")
+async def get_health():
+    return health_report()
+
+
 @app.get("/prompt")
 async def get_prompt():
-    return load_prompt()
+    return read_prompt()
 
 
 @app.get("/progress")
