@@ -1,7 +1,10 @@
 from fastapi import FastAPI, HTTPException
+import json
 import os
 import sqlite3
+from ipaddress import ip_address
 from typing import Any, Dict
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
@@ -14,7 +17,12 @@ MAX_TODO_ID_CHARS = 128
 MAX_TODO_TITLE_CHARS = 500
 MAX_TODO_DESCRIPTION_CHARS = 4000
 MAX_TODO_STATUS_CHARS = 64
+MAX_CHAT_PROMPT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_PROMPT_CHARS", "12000"))
+MAX_CHAT_CONTEXT_CHARS = int(os.environ.get("PROJECT_NAS_MAX_CONTEXT_CHARS", "12000"))
+MAX_CHAT_RESPONSE_CHARS = int(os.environ.get("PROJECT_NAS_MAX_RESPONSE_CHARS", "12000"))
+CHAT_TIMEOUT_SECONDS = float(os.environ.get("PROJECT_NAS_CHAT_TIMEOUT", "90"))
 ALLOWED_TODO_STATUSES = frozenset({"pending", "in_progress", "completed", "cancelled"})
+ALLOWED_CHAT_METADATA = frozenset({"model", "budget", "memory"})
 
 
 def resolve_session_db() -> str:
@@ -116,7 +124,6 @@ def _probe_model() -> dict[str, Any]:
     try:
         request = Request(base.rstrip("/") + "/api/tags", method="GET")
         with urlopen(request, timeout=2) as response:
-            import json
             payload = json.loads(response.read().decode("utf-8"))
         models = sorted({item.get("name") for item in payload.get("models", []) if isinstance(item, dict) and item.get("name")})
         selected = next((name for name in preferred if name in models), models[0] if models else None)
@@ -196,6 +203,56 @@ def _validate_todo_update(item: Dict[str, Any]) -> dict[str, str | None]:
     return result
 
 
+def _is_loopback_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return False
+        hostname = parsed.hostname.lower()
+        if hostname == "localhost":
+            return True
+        try:
+            return ip_address(hostname).is_loopback
+        except ValueError:
+            return False
+    except (TypeError, ValueError):
+        return False
+
+
+def _chat_worker_url() -> str:
+    url = os.environ.get("PROJECT_NAS_CHAT_WORKER_URL", "http://127.0.0.1:5000/chat")
+    if not _is_loopback_url(url):
+        raise HTTPException(status_code=503, detail="chat worker must use a loopback URL")
+    return url
+
+
+def _call_chat_worker(prompt: str, context: str) -> dict[str, Any]:
+    worker_url = _chat_worker_url()
+    payload = json.dumps({"context": context, "prompt": prompt}).encode("utf-8")
+    request = Request(worker_url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(request, timeout=CHAT_TIMEOUT_SECONDS) as response:
+            raw = response.read(MAX_CHAT_RESPONSE_CHARS + 4096)
+            if response.status < 200 or response.status >= 300:
+                raise HTTPException(status_code=502, detail="local chat worker returned an unsuccessful status")
+    except HTTPException:
+        raise
+    except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        raise HTTPException(status_code=503, detail="local chat worker is unavailable") from exc
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="local chat worker returned invalid JSON") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("response"), str):
+        raise HTTPException(status_code=502, detail="local chat worker returned no valid response")
+    result: dict[str, Any] = {"response": data["response"][:MAX_CHAT_RESPONSE_CHARS]}
+    for key in ALLOWED_CHAT_METADATA:
+        value = data.get(key)
+        if isinstance(value, (str, int, float, bool, dict, list)):
+            result[key] = value
+    return result
+
+
 TOOL_GATEWAY = build_default_gateway(run_git_info)
 
 
@@ -225,6 +282,19 @@ async def get_health():
 @app.get("/prompt")
 async def get_prompt():
     return read_prompt()
+
+
+@app.post("/chat")
+async def chat(payload: Dict[str, Any]):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+    allowed = {"prompt", "context"}
+    unsupported = set(payload) - allowed
+    if unsupported:
+        raise HTTPException(status_code=400, detail=f"unsupported chat fields: {', '.join(sorted(unsupported))}")
+    prompt = _bounded_text(payload.get("prompt"), "prompt", MAX_CHAT_PROMPT_CHARS, required=True)
+    context = _bounded_text(payload.get("context", ""), "context", MAX_CHAT_CONTEXT_CHARS) or ""
+    return _call_chat_worker(prompt, context)
 
 
 @app.get("/progress")
