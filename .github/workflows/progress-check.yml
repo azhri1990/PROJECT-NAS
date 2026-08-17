@@ -28,20 +28,31 @@ jobs:
           python -m pip install -r requirements-test.txt
           python -m pip install -r requirements-runtime.txt
 
-      - name: Check shell syntax
-        run: bash -n runtime/project-nas.sh
+      - name: Initialize repository metadata for container checks
+        run: |
+          git init -q
+          git config user.name "PROJECT-NAS CI"
+          git config user.email "ci@project-nas.local"
+          git switch -c "${GITHUB_REF_NAME}"
+          git add -A
+
+      - name: Check repository whitespace
+        run: git diff --cached --check
 
       - name: Compile Python sources
         run: python -m compileall -q runtime tests
 
-      - name: Check repository whitespace
-        run: git diff --check
+      - name: Check shell syntax
+        run: bash -n runtime/project-nas.sh
 
       - name: Run full test suite
         run: pytest -q tests
 
       - name: Run PROJECT-NAS doctor diagnostics
         run: python runtime/doctor.py
+
+      - name: Commit CI snapshot for repository readers
+        run: git commit -qm "ci: verification snapshot"
 
       - name: Run progress reporter
         run: |
@@ -52,7 +63,7 @@ jobs:
 
           payload = json.loads(Path("progress.json").read_text(encoding="utf-8"))
           repo = payload["repo"]
-          assert repo["branch"] not in (None, "", "unknown")
+          assert repo["branch"] == "${GITHUB_REF_NAME}"
           assert repo["recent_commits"]
           print(f"CI progress check OK: branch={repo['branch']}, commits={len(repo['recent_commits'])}")
           PY
