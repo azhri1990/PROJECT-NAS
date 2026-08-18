@@ -130,8 +130,9 @@ class SecondBrain:
         return self.strategy_memory.record_strategy(strategy)
 
     def record_outcome(self, strategy_id: str, status: OutcomeStatus) -> None:
-        self.strategy_memory.record_outcome(strategy_id, status)
-        self.decision_engine.observe(strategy_id, status)
+        resolved_id = self.strategy_memory.resolve_strategy_id(strategy_id)
+        self.strategy_memory.record_outcome(resolved_id, status)
+        self.decision_engine.observe(resolved_id, status)
 
     def recommend_strategy(self, candidates: list[DecisionCandidate], context: DecisionContext | None = None) -> list[DecisionScore]:
         for candidate in candidates:
