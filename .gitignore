@@ -31,3 +31,6 @@ secrets.json
 
 # Runtime-generated state
 runtime/.pids/
+
+# Runtime certification history
+runtime/certification-history.jsonl
