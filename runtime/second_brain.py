@@ -10,6 +10,7 @@ from pathlib import Path
 from runtime.adaptive_decision import AdaptiveDecisionEngine, DecisionCandidate, DecisionContext, DecisionScore, OutcomeStatus, Strategy, StrategyStats
 from runtime.autonomous_learning import AutonomousLearningLoop, LearnedMemory
 from runtime.cognitive_memory import CognitiveMemory, MemoryLifecycle
+from runtime.learning_loop_v3 import LearningLoopV3
 from runtime.strategy_memory import StrategyMemory
 from runtime.verified_learning import LearningDecision, LearningType
 
@@ -37,6 +38,7 @@ class SecondBrain:
         self.decision_engine = AdaptiveDecisionEngine()
         self._hydrate_strategy_stats()
         self._init_provenance()
+        self.learning_loop = LearningLoopV3(self, self.db_path.parent / "learning_loop_v3.sqlite3")
 
     def _hydrate_strategy_stats(self) -> None:
         for strategy in self.strategy_memory.list_strategies():
