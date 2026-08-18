@@ -6,6 +6,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 CONTROLLER="$SCRIPT_DIR/project-nas.sh"
+RECOVERY="$SCRIPT_DIR/recovery.sh"
 HISTORY_FILE="${PROJECT_NAS_CERT_HISTORY_FILE:-$PROJECT_ROOT/runtime/certification-history.jsonl}"
 HISTORY_MAX_BYTES="${PROJECT_NAS_CERT_HISTORY_MAX_BYTES:-65536}"
 
@@ -47,13 +48,9 @@ command -v python >/dev/null 2>&1 || fail "Python executable not found."
 command -v curl >/dev/null 2>&1 || fail "curl is required."
 command -v git >/dev/null 2>&1 || fail "git is required."
 
-started_by_certify=0
 GATE_STATUS_FILE="$(mktemp)"
 REGRESSION_LOG="$(mktemp)"
 cleanup() {
-    if [ "$started_by_certify" -eq 1 ]; then
-        "$CONTROLLER" stop >/dev/null 2>&1 || true
-    fi
     rm -f "$GATE_STATUS_FILE" "$REGRESSION_LOG"
 }
 trap cleanup EXIT
@@ -87,12 +84,12 @@ CertificationHistory(
 PY
 }
 
-if curl -fsS --connect-timeout 1 --max-time 2 "${PROJECT_NAS_BACKEND_HEALTH_URL:-http://127.0.0.1:5001/health}" >/dev/null 2>&1; then
-    echo "✓ Runtime already healthy; preserving external ownership."
-else
-    echo "Runtime unavailable; starting under controller ownership..."
-    "$CONTROLLER" start || fail "Runtime failed to start."
-    started_by_certify=1
+if [ ! -x "$RECOVERY" ]; then
+    fail "Runtime recovery helper is missing or not executable."
+fi
+
+if ! "$RECOVERY"; then
+    fail "Runtime recovery failed."
 fi
 
 echo "=== PROJECT-NAS CERTIFICATION ==="
@@ -119,6 +116,7 @@ run_gate "Memory health" curl -fsS --connect-timeout 2 --max-time 5 "${PROJECT_N
 run_gate "Ollama health" curl -fsS --connect-timeout 2 --max-time 5 "${PROJECT_NAS_OLLAMA_BASE_URL:-http://127.0.0.1:11434}/api/tags"
 run_gate "Python compilation" python -m compileall -q runtime tests
 run_gate "Shell syntax" bash -n "$CONTROLLER"
+run_gate "Recovery helper syntax" bash -n "$RECOVERY"
 run_gate "Repository integrity" git -C "$PROJECT_ROOT" diff --check
 
 echo "→ Regression suite"
