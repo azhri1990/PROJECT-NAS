@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from runtime.autonomous_learning import AutonomousLearningLoop
-from runtime.cognitive_memory import MemoryLifecycle
+from runtime.cognitive_memory import MemoryLifecycle, MemoryProvenance
 from runtime.second_brain import SecondBrain
 from runtime.verified_learning import LearningType
 
@@ -99,13 +99,12 @@ def test_second_brain_exposes_history_and_rollback():
 def test_second_brain_rejects_unverified_permanent_promotion():
     with tempfile.TemporaryDirectory() as tmp:
         brain = SecondBrain(Path(tmp) / "brain.sqlite3")
-        brain.learn(
-            kind=LearningType.FACT,
-            statement="Unverified claim",
+        brain.learning.cognitive_memory.add(
+            "Unverified claim",
+            "FACT",
+            MemoryProvenance("model", "generated-1"),
             confidence=0.9,
             evidence=2,
-            verified=False,
-            source="model",
         )
         cognitive = brain.learning.cognitive_memory.recall("Unverified claim", 1)[0]
         with pytest.raises(PermissionError, match="verified or trusted"):
