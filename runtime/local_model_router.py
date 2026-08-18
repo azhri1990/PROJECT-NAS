@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from runtime.resource_aware_model_router import ResourceAwareModelRouter, TaskComplexity
+
 DEFAULT_PREFERRED_MODELS = ("llama3.2:3b", "llama3.2:1b", "llama3.1:8b")
 
 
@@ -85,6 +87,14 @@ class LocalModelRouter:
 
     def discover_route(self) -> ModelRoute:
         return self.route(self.discover())
+
+    def resource_aware_route(self, complexity: TaskComplexity) -> Any:
+        """Select a local model using live resource pressure without changing URL policy."""
+        router = ResourceAwareModelRouter(
+            self.configured_model,
+            preferred_models=self.preferred_models,
+        )
+        return router.route(available=self.discover(), complexity=complexity)
 
     def generate(
         self,
