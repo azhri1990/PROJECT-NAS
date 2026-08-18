@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from runtime.autonomous_learning import AutonomousLearningLoop
-from runtime.cognitive_memory import MemoryLifecycle
+from runtime.cognitive_memory import MemoryLifecycle, MemoryProvenance
 from runtime.verified_learning import LearningType
 
 
@@ -30,12 +30,12 @@ def test_unverified_learning_cannot_be_pinned(tmp_path):
         db_path=tmp_path / "learning.sqlite3",
         cognitive_db_path=tmp_path / "cognitive.sqlite3",
     )
-    loop.learn(
-        kind=LearningType.FACT,
-        statement="Unverified claim",
+    loop.cognitive_memory.add(
+        "Unverified claim",
+        "FACT",
+        MemoryProvenance("model", "generated-1"),
         confidence=0.9,
         evidence=2,
-        verified=False,
     )
 
     with pytest.raises(PermissionError, match="verified or trusted"):
