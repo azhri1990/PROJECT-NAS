@@ -71,16 +71,21 @@ class ToolRegistry:
         self._audit(spec, decision, validated)
 
         if decision.decision == Decision.REQUIRE_CONFIRMATION:
-            proposal = self.approval.propose(
+            if approval is None:
+                proposal = self.approval.propose(
+                    tool_name=spec.name,
+                    version=spec.version,
+                    payload=validated,
+                    risk=spec.risk,
+                    reason=decision.reason,
+                )
+                raise ApprovalRequired(proposal.proposal_id)
+            if not self.approval.consume_for_action(
+                approval,
                 tool_name=spec.name,
                 version=spec.version,
                 payload=validated,
-                risk=spec.risk,
-                reason=decision.reason,
-            )
-            if approval is None:
-                raise ApprovalRequired(proposal.proposal_id)
-            if not self.approval.consume(approval, proposal):
+            ):
                 raise PermissionError("approval is invalid, mismatched, or already consumed")
         elif decision.decision != Decision.ALLOW:
             raise PermissionError(decision.reason)
