@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from runtime.cognitive_memory import CognitiveMemoryStore, MemoryProvenance
+from runtime.cognitive_memory import CognitiveMemory, CognitiveMemoryStore, MemoryProvenance
 from runtime.verified_learning import LearningCandidate, LearningType, VerifiedLearningEngine, LearningDecision
 
 
@@ -110,8 +110,6 @@ class AutonomousLearningLoop:
                     (candidate.kind.value, candidate.statement, candidate.confidence, candidate.evidence),
                 )
 
-        # The legacy learning table remains backward compatible. The cognitive layer
-        # receives the same verified knowledge plus explicit provenance and lifecycle.
         self.cognitive_memory.add(
             candidate.statement,
             candidate.kind.value,
@@ -179,3 +177,31 @@ class AutonomousLearningLoop:
     def consolidate(self, query: str) -> int:
         """Consolidate only evidence already present; never invent summaries."""
         return len(self.cognitive_memory.recall(query, limit=100))
+
+    def review_memory(self, *, decay: float = 0.05, floor: float = 0.0) -> dict[str, int]:
+        """Run deterministic cognitive-memory maintenance and return lifecycle counts."""
+        return self.cognitive_memory.review(decay=decay, floor=floor)
+
+    def approve_permanent(self, memory: int | str, *, approver: str = "user") -> CognitiveMemory:
+        """Explicitly pin only existing verified/trusted knowledge."""
+        if isinstance(memory, int) and not isinstance(memory, bool):
+            with self._connect() as conn:
+                row = conn.execute("SELECT statement FROM learned_memory WHERE id=?", (memory,)).fetchone()
+            if row is None:
+                raise KeyError(f"memory not found: {memory}")
+            matches = self.cognitive_memory.recall(row["statement"], limit=20)
+            cognitive = next((item for item in matches if item.statement == row["statement"]), None)
+        elif isinstance(memory, str) and memory.strip():
+            matches = self.cognitive_memory.recall(memory.strip(), limit=1)
+            cognitive = matches[0] if matches and matches[0].statement == memory.strip() else None
+        else:
+            raise ValueError("memory must be an integer legacy id or exact statement")
+        if cognitive is None:
+            raise KeyError(f"cognitive memory not found: {memory}")
+        if cognitive.lifecycle.value not in {"VERIFIED", "TRUSTED", "PINNED"}:
+            raise PermissionError("only verified or trusted memory can be pinned")
+        return self.cognitive_memory.approve_pinned(cognitive.id, approver=approver)
+
+    def rollback_memory(self, memory_id: str) -> CognitiveMemory:
+        """Rollback the latest cognitive-memory lifecycle change."""
+        return self.cognitive_memory.rollback(memory_id)
