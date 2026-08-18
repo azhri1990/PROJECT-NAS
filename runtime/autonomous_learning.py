@@ -7,6 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from runtime.cognitive_memory import CognitiveMemoryStore, MemoryProvenance
 from runtime.verified_learning import LearningCandidate, LearningType, VerifiedLearningEngine, LearningDecision
 
 
@@ -22,10 +23,17 @@ class LearnedMemory:
 class AutonomousLearningLoop:
     """Capture, verify, persist, recall, consolidate, and revalidate lessons without self-modifying code."""
 
-    def __init__(self, db_path: Path | str = Path("runtime/claude-mem-db/learning.sqlite3")) -> None:
+    def __init__(
+        self,
+        db_path: Path | str = Path("runtime/claude-mem-db/learning.sqlite3"),
+        cognitive_db_path: Path | str | None = None,
+    ) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = VerifiedLearningEngine()
+        self.cognitive_memory = CognitiveMemoryStore(
+            cognitive_db_path or self.db_path.parent / "cognitive_memory.sqlite3"
+        )
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -101,6 +109,23 @@ class AutonomousLearningLoop:
                     "INSERT INTO learned_memory(kind, statement, confidence, evidence) VALUES (?, ?, ?, ?)",
                     (candidate.kind.value, candidate.statement, candidate.confidence, candidate.evidence),
                 )
+
+        # The legacy learning table remains backward compatible. The cognitive layer
+        # receives the same verified knowledge plus explicit provenance and lifecycle.
+        self.cognitive_memory.add(
+            candidate.statement,
+            candidate.kind.value,
+            MemoryProvenance("autonomous_learning", candidate.statement),
+            confidence=candidate.confidence,
+            evidence=candidate.evidence,
+        )
+        cognitive = self.cognitive_memory.recall(candidate.statement, limit=1)
+        if cognitive and cognitive[0].lifecycle.value == "NEW":
+            self.cognitive_memory.promote_verified(
+                cognitive[0].id,
+                confidence=candidate.confidence,
+                evidence=candidate.evidence,
+            )
         return decision
 
     def recall(self, query: str, limit: int = 5) -> list[LearnedMemory]:
@@ -130,8 +155,12 @@ class AutonomousLearningLoop:
             for _, row in scored[:limit]
         ]
 
+    def recall_cognitive(self, query: str, limit: int = 5):
+        """Return lifecycle-aware memories from the cognitive layer."""
+        return self.cognitive_memory.recall(query, limit=limit)
+
     def revalidate(self, *, decay: float = 0.05, floor: float = 0.0) -> int:
-        """Decay confidence for memories that have not received fresh evidence."""
+        """Decay confidence in both legacy and cognitive memory stores."""
         if not 0.0 <= decay <= 1.0:
             raise ValueError("decay must be between 0 and 1")
         if not 0.0 <= floor <= 1.0:
@@ -144,12 +173,9 @@ class AutonomousLearningLoop:
                 if new_confidence != float(row["confidence"]):
                     conn.execute("UPDATE learned_memory SET confidence=? WHERE id=?", (new_confidence, row["id"]))
                     changed += 1
-            return changed
+        self.cognitive_memory.revalidate(decay=decay, floor=floor)
+        return changed
 
     def consolidate(self, query: str) -> int:
-        """Return the number of related memories considered consolidated.
-
-        Duplicate statements are already merged at write time. This method provides a
-        deterministic cognitive-loop checkpoint without inventing unsupported summaries.
-        """
-        return len(self.recall(query, limit=100))
+        """Consolidate only evidence already present; never invent summaries."""
+        return len(self.cognitive_memory.recall(query, limit=100))
