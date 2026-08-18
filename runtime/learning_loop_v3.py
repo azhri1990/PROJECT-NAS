@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from runtime.adaptive_decision import OutcomeStatus
+from runtime.learning_quality import LearningQualityEngine
 from runtime.verified_learning import LearningType
 
 
@@ -44,6 +45,7 @@ class LearningLoopV3:
         self.brain = brain
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.quality = LearningQualityEngine()
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -130,17 +132,25 @@ class LearningLoopV3:
         learned = False
         if status is not OutcomeStatus.UNKNOWN:
             self.brain.record_outcome(observation.strategy_id, status)
-            if lesson and status in {OutcomeStatus.SUCCESS, OutcomeStatus.PARTIAL} and evidence >= 2:
-                decision = self.brain.learn(
-                    kind=LearningType.DECISION,
-                    statement=lesson,
-                    confidence=0.75 if status is OutcomeStatus.SUCCESS else 0.65,
+            if lesson and status in {OutcomeStatus.SUCCESS, OutcomeStatus.PARTIAL}:
+                base_confidence = 0.75 if status is OutcomeStatus.SUCCESS else 0.65
+                quality = self.quality.evaluate(
+                    confidence=base_confidence,
                     evidence=evidence,
                     verified=True,
-                    source=observation.source,
-                    context=observation.context,
+                    contradiction=False,
                 )
-                learned = decision.promoted
+                if quality.promote:
+                    decision = self.brain.learn(
+                        kind=LearningType.DECISION,
+                        statement=lesson,
+                        confidence=quality.confidence,
+                        evidence=evidence,
+                        verified=True,
+                        source=observation.source,
+                        context=observation.context,
+                    )
+                    learned = decision.promoted
 
         with self._connect() as conn:
             conn.execute(
