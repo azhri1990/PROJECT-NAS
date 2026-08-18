@@ -33,6 +33,11 @@ class StrategyMemory:
             if status is not OutcomeStatus.UNKNOWN:
                 conn.execute("INSERT INTO outcomes(strategy_id, status) VALUES (?, ?)", (strategy_id, status.value))
 
+    def outcomes(self, strategy_id: str) -> list[OutcomeStatus]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT status FROM outcomes WHERE strategy_id=? ORDER BY id", (strategy_id,)).fetchall()
+        return [OutcomeStatus(row[0]) for row in rows]
+
     def list_strategies(self, limit: int = 50) -> list[Strategy]:
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
@@ -41,12 +46,11 @@ class StrategyMemory:
         return [Strategy(*row) for row in rows]
 
     def strategy_stats(self, strategy_id: str) -> StrategyStats:
-        with self._connect() as conn:
-            rows = [row[0] for row in conn.execute("SELECT status FROM outcomes WHERE strategy_id=?", (strategy_id,)).fetchall()]
+        rows = self.outcomes(strategy_id)
         total = len(rows)
         if not total:
             return StrategyStats()
-        success = rows.count(OutcomeStatus.SUCCESS.value) / total
-        partial = rows.count(OutcomeStatus.PARTIAL.value) / total
-        failure = rows.count(OutcomeStatus.FAILURE.value) / total
+        success = sum(status is OutcomeStatus.SUCCESS for status in rows) / total
+        partial = sum(status is OutcomeStatus.PARTIAL for status in rows) / total
+        failure = sum(status is OutcomeStatus.FAILURE for status in rows) / total
         return StrategyStats(total, success, partial, failure)
