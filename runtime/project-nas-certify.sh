@@ -84,11 +84,9 @@ CertificationHistory(
 PY
 }
 
-if [ ! -x "$RECOVERY" ]; then
-    fail "Runtime recovery helper is missing or not executable."
-fi
+[ -f "$RECOVERY" ] || fail "Runtime recovery helper is missing."
 
-if ! "$RECOVERY"; then
+if ! bash "$RECOVERY"; then
     fail "Runtime recovery failed."
 fi
 
