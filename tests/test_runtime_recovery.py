@@ -29,9 +29,10 @@ def test_recovery_is_health_aware_and_verifies_recovery():
     assert 'Runtime recovery verified' in text
 
 
-def test_certifier_uses_recovery_path_before_certification():
+def test_certifier_uses_recovery_helper_before_certification():
     text = CERTIFIER.read_text(encoding="utf-8")
-    assert 'runtime/recovery.sh' in text
+    assert 'RECOVERY="$SCRIPT_DIR/recovery.sh"' in text
+    assert '"$RECOVERY"' in text
 
 
 def test_recovery_does_not_introduce_paid_services():
