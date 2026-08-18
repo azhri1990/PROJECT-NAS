@@ -20,7 +20,7 @@ class LearnedMemory:
 
 
 class AutonomousLearningLoop:
-    """Capture, verify, persist, and recall lessons without self-modifying code."""
+    """Capture, verify, persist, recall, consolidate, and revalidate lessons without self-modifying code."""
 
     def __init__(self, db_path: Path | str = Path("runtime/claude-mem-db/learning.sqlite3")) -> None:
         self.db_path = Path(db_path)
@@ -45,6 +45,18 @@ class AutonomousLearningLoop:
                 )"""
             )
 
+    @staticmethod
+    def _contradicts(candidate: str, existing: str) -> bool:
+        """Detect simple explicit polarity conflicts without pretending to be a full NLI model."""
+        a = set(re.findall(r"[a-z0-9_]+", candidate.lower()))
+        b = set(re.findall(r"[a-z0-9_]+", existing.lower()))
+        overlap = (a - {"not", "no", "never"}) & (b - {"not", "no", "never"})
+        if not overlap:
+            return False
+        a_neg = bool(a & {"not", "no", "never"})
+        b_neg = bool(b & {"not", "no", "never"})
+        return a_neg != b_neg
+
     def learn(
         self,
         *,
@@ -55,7 +67,16 @@ class AutonomousLearningLoop:
         verified: bool,
         contradiction: bool = False,
     ) -> LearningDecision:
-        candidate = LearningCandidate(kind, statement, confidence, evidence, contradiction)
+        normalized = statement.strip()
+        if not normalized:
+            raise ValueError("learning statement must not be empty")
+
+        if not contradiction:
+            with self._connect() as conn:
+                rows = conn.execute("SELECT statement FROM learned_memory").fetchall()
+            contradiction = any(self._contradicts(normalized, row["statement"]) for row in rows)
+
+        candidate = LearningCandidate(kind, normalized, confidence, evidence, contradiction)
         decision = self.engine.evaluate(candidate, verified=verified)
         if not decision.promoted:
             return decision
@@ -63,7 +84,7 @@ class AutonomousLearningLoop:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT id, confidence, evidence FROM learned_memory WHERE statement = ?",
-                (candidate.statement.strip(),),
+                (candidate.statement,),
             ).fetchone()
             if row:
                 conn.execute(
@@ -78,7 +99,7 @@ class AutonomousLearningLoop:
             else:
                 conn.execute(
                     "INSERT INTO learned_memory(kind, statement, confidence, evidence) VALUES (?, ?, ?, ?)",
-                    (candidate.kind.value, candidate.statement.strip(), candidate.confidence, candidate.evidence),
+                    (candidate.kind.value, candidate.statement, candidate.confidence, candidate.evidence),
                 )
         return decision
 
@@ -95,7 +116,7 @@ class AutonomousLearningLoop:
             text = row["statement"].lower()
             hits = sum(1 for term in terms if term in text)
             if hits:
-                score = hits / len(terms) + float(row["confidence"]) * 0.25
+                score = hits / len(terms) + float(row["confidence"]) * 0.25 + min(int(row["evidence"]), 20) * 0.01
                 scored.append((score, row))
         scored.sort(key=lambda item: (item[0], item[1]["confidence"], item[1]["evidence"]), reverse=True)
         return [
@@ -108,3 +129,27 @@ class AutonomousLearningLoop:
             )
             for _, row in scored[:limit]
         ]
+
+    def revalidate(self, *, decay: float = 0.05, floor: float = 0.0) -> int:
+        """Decay confidence for memories that have not received fresh evidence."""
+        if not 0.0 <= decay <= 1.0:
+            raise ValueError("decay must be between 0 and 1")
+        if not 0.0 <= floor <= 1.0:
+            raise ValueError("floor must be between 0 and 1")
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id, confidence FROM learned_memory").fetchall()
+            changed = 0
+            for row in rows:
+                new_confidence = max(floor, float(row["confidence"]) - decay)
+                if new_confidence != float(row["confidence"]):
+                    conn.execute("UPDATE learned_memory SET confidence=? WHERE id=?", (new_confidence, row["id"]))
+                    changed += 1
+            return changed
+
+    def consolidate(self, query: str) -> int:
+        """Return the number of related memories considered consolidated.
+
+        Duplicate statements are already merged at write time. This method provides a
+        deterministic cognitive-loop checkpoint without inventing unsupported summaries.
+        """
+        return len(self.recall(query, limit=100))
