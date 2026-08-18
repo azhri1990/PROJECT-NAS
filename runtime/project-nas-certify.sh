@@ -1,4 +1,3 @@
-#!/bin/bash
 # PROJECT-NAS zero-cost local certification wrapper.
 # Uses the existing runtime controller and never assumes a green result.
 set -uo pipefail
@@ -135,6 +134,12 @@ else
     exit 1
 fi
 
+# The regression detector itself is part of the current certification schema.
+# Record it as GREEN before comparison so a previous baseline containing this
+# gate is compared against the same current gate set. If comparison fails,
+# overwrite it with RED before persisting the failed certification.
+printf '%s\tGREEN\n' "Regression detection" >> "$GATE_STATUS_FILE"
+
 COMPARISON_OUTPUT="$(
     HISTORY_FILE="$HISTORY_FILE" HISTORY_MAX_BYTES="$HISTORY_MAX_BYTES" TEST_COUNT="$TEST_COUNT" GATE_STATUS_FILE="$GATE_STATUS_FILE" \
         python - <<'PY'
@@ -163,6 +168,7 @@ PY
 )"
 
 if [ "${COMPARISON_OUTPUT%%$'\n'*}" = "RED" ]; then
+    sed -i '$d' "$GATE_STATUS_FILE"
     printf '%s\tRED\n' "Regression detection" >> "$GATE_STATUS_FILE"
     echo "✗ Regression detected" >&2
     echo "$COMPARISON_OUTPUT" | tail -n +2 >&2
@@ -171,7 +177,6 @@ if [ "${COMPARISON_OUTPUT%%$'\n'*}" = "RED" ]; then
     exit 1
 fi
 
-printf '%s\tGREEN\n' "Regression detection" >> "$GATE_STATUS_FILE"
 record_history "GREEN" "$TEST_COUNT" || echo "⚠ Could not persist certification history." >&2
 
 echo "========================================"
