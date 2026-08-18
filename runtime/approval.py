@@ -103,3 +103,19 @@ class ApprovalManager:
             return False
         self._consumed.add(receipt.proposal_id)
         return True
+
+    def consume_for_action(
+        self,
+        receipt: ApprovalReceipt,
+        *,
+        tool_name: str,
+        version: str,
+        payload: dict,
+    ) -> bool:
+        """Consume approval only when it matches the exact current action."""
+        proposal = self.require(receipt.proposal_id)
+        if proposal.tool_name != tool_name or proposal.version != version:
+            return False
+        if action_fingerprint(tool_name, version, payload) != proposal.fingerprint:
+            return False
+        return self.consume(receipt, proposal)
