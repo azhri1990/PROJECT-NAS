@@ -28,6 +28,8 @@ def compare_certifications(
     try:
         baseline_tests = int(baseline["tests"])
         current_tests = int(current.get("tests", 0))
+        if baseline_tests < 0 or current_tests < 0:
+            raise ValueError
     except (TypeError, ValueError):
         issues.append("Certification test count is invalid")
     else:
@@ -40,8 +42,11 @@ def compare_certifications(
         issues.append("Certification gate data is invalid")
     else:
         for name, baseline_status in baseline_gates.items():
-            if baseline_status == "GREEN" and current_gates.get(name) == "RED":
+            current_status = current_gates.get(name)
+            if baseline_status == "GREEN" and current_status == "RED":
                 issues.append(f"Gate failed: {name}")
+            elif baseline_status == "GREEN" and current_status is None:
+                issues.append(f"Gate missing: {name}")
 
     if current.get("result") == "RED":
         issues.append("Current certification is RED")
