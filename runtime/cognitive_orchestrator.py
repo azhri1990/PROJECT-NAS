@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from runtime.approval import ApprovalReceipt
 from runtime.orchestration_verifier import VerificationResult, verify_result
 from runtime.second_brain import SecondBrain
 from runtime.orchestration_tools import ToolRegistry
@@ -43,7 +44,7 @@ class CognitiveOrchestrator:
     """Connect recall, governed execution, verification, and verified learning.
 
     The brain supplies context only. ToolRegistry remains authoritative for
-    capability and policy decisions; verification remains fail-closed.
+    capability, approval, and policy decisions; verification remains fail-closed.
     """
 
     def __init__(
@@ -54,6 +55,7 @@ class CognitiveOrchestrator:
     ) -> None:
         self.brain = brain or SecondBrain()
         self.registry = registry or ToolRegistry()
+        self.approval = self.registry.approval
 
     def recall_context(self, query: str, limit: int = 5) -> tuple[dict[str, Any], ...]:
         if not isinstance(query, str) or not query.strip():
@@ -87,6 +89,7 @@ class CognitiveOrchestrator:
         learn_kind: LearningType = LearningType.TASK,
         learn_confidence: float = 0.9,
         learn_evidence: int = 2,
+        approval: ApprovalReceipt | None = None,
     ) -> CognitiveOutcome:
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise ValueError("tool_name must be a non-empty string")
@@ -100,8 +103,8 @@ class CognitiveOrchestrator:
         memory = self.recall_context(memory_query, 5) if memory_query else ()
 
         # Memory is context, never authority. The registry performs the actual
-        # capability/policy decision before the tool handler can run.
-        result = self.registry.execute(tool_name.strip(), payload)
+        # capability/policy/approval decision before the tool handler can run.
+        result = self.registry.execute(tool_name.strip(), payload, approval=approval)
         verification = verify_result(tool_name.strip(), result)
 
         learning: LearningDecision | None = None
