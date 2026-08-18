@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from runtime.approval import ApprovalManager, ApprovalReceipt, ApprovalRequired
 from runtime.orchestration_policy import Capability, Decision, PolicyEngine
 
 
@@ -23,10 +24,16 @@ class ToolSpec:
 class ToolRegistry:
     """Allowlist registry. The model can select a name, never a capability."""
 
-    def __init__(self, policy: PolicyEngine | None = None, audit_limit: int = 100) -> None:
+    def __init__(
+        self,
+        policy: PolicyEngine | None = None,
+        audit_limit: int = 100,
+        approval: ApprovalManager | None = None,
+    ) -> None:
         if audit_limit < 1:
             raise ValueError("audit_limit must be positive")
         self.policy = policy or PolicyEngine()
+        self.approval = approval or ApprovalManager()
         self._tools: dict[str, ToolSpec] = {}
         self.audit: list[dict[str, Any]] = []
         self.audit_limit = audit_limit
@@ -46,7 +53,13 @@ class ToolRegistry:
         except KeyError as exc:
             raise KeyError(f"unknown tool: {name}") from exc
 
-    def execute(self, name: str, payload: dict[str, Any]) -> Any:
+    def execute(
+        self,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        approval: ApprovalReceipt | None = None,
+    ) -> Any:
         spec = self.get(name)
         validated = self._validate(payload, spec.input_schema)
         decision = self.policy.evaluate(
@@ -56,8 +69,22 @@ class ToolRegistry:
             payload=validated,
         )
         self._audit(spec, decision, validated)
-        if decision.decision != Decision.ALLOW:
+
+        if decision.decision == Decision.REQUIRE_CONFIRMATION:
+            proposal = self.approval.propose(
+                tool_name=spec.name,
+                version=spec.version,
+                payload=validated,
+                risk=spec.risk,
+                reason=decision.reason,
+            )
+            if approval is None:
+                raise ApprovalRequired(proposal.proposal_id)
+            if not self.approval.consume(approval, proposal):
+                raise PermissionError("approval is invalid, mismatched, or already consumed")
+        elif decision.decision != Decision.ALLOW:
             raise PermissionError(decision.reason)
+
         return spec.handler(validated)
 
     @staticmethod
