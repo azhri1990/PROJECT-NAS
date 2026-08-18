@@ -12,9 +12,19 @@ def test_runtime_recovery_helper_exists_and_is_bash():
     assert '"$CONTROLLER" start' in text
 
 
+def test_recovery_checks_all_local_services():
+    text = RECOVERY.read_text(encoding="utf-8")
+    for marker in (
+        "BACKEND_HEALTH_URL",
+        "MEMORY_HEALTH_URL",
+        "OLLAMA_HEALTH_URL",
+        "runtime_healthy",
+    ):
+        assert marker in text
+
+
 def test_recovery_is_health_aware_and_verifies_recovery():
     text = RECOVERY.read_text(encoding="utf-8")
-    assert 'BACKEND_HEALTH_URL' in text
     assert 'Runtime unhealthy' in text
     assert 'Runtime recovery verified' in text
 
