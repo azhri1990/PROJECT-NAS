@@ -16,10 +16,23 @@ def test_policy_fails_closed_on_invalid_request():
     assert "capability" in denied.reason.lower()
 
 
-def test_model_cannot_grant_itself_capability():
+def test_policy_does_not_allow_model_to_grant_system_capability():
     policy = PolicyEngine()
-    with pytest.raises(ValueError):
-        policy.evaluate(tool_name="x", capability=Capability.SYSTEM_MUTATION, risk="low", payload={})
+    decision = policy.evaluate(
+        tool_name="model.claimed.system_action",
+        capability=Capability.SYSTEM_MUTATION,
+        risk="low",
+        payload={"requested_by": "model"},
+    )
+    assert decision.decision == Decision.DENY
+    assert decision.capability == Capability.SYSTEM_MUTATION
+    assert "requires explicit approval" in decision.reason
+
+
+def test_unknown_capability_is_rejected():
+    policy = PolicyEngine()
+    with pytest.raises(ValueError, match="unknown capability"):
+        policy.evaluate(tool_name="x", capability="model_grants_itself", risk="low", payload={})
 
 
 def test_registry_validates_schema_and_capability():
