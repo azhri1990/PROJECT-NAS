@@ -12,8 +12,8 @@ def test_policy_fails_closed_on_invalid_request():
     assert decision.reason
 
     denied = policy.evaluate(tool_name="shell.exec", capability="execute_safe", risk="low", payload={})
-    assert denied.decision == Decision.DENY
-    assert "capability" in denied.reason.lower()
+    assert denied.decision == Decision.REQUIRE_CONFIRMATION
+    assert "approval" in denied.reason.lower()
 
 
 def test_policy_does_not_allow_model_to_grant_system_capability():

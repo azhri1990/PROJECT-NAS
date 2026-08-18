@@ -64,8 +64,13 @@ class PolicyEngine:
             return PolicyDecision(Decision.DENY, "capability external_network is disabled by default", cap, risk)
         if cap == Capability.SYSTEM_MUTATION:
             return PolicyDecision(Decision.DENY, "capability system_mutation requires explicit approval", cap, risk)
-        if cap == Capability.EXECUTE_SAFE and risk != "low":
-            return PolicyDecision(Decision.REQUIRE_CONFIRMATION, "capability execute_safe requires confirmation at this risk level", cap, risk)
+        if cap == Capability.EXECUTE_SAFE:
+            return PolicyDecision(
+                Decision.REQUIRE_CONFIRMATION,
+                "execution requires explicit approval for this specific action",
+                cap,
+                risk,
+            )
         if cap in {Capability.MEMORY_WRITE, Capability.NETWORK_LOCAL}:
             return PolicyDecision(Decision.REQUIRE_CONFIRMATION, f"capability {cap.value} requires explicit confirmation", cap, risk)
         if cap in _READ_ONLY and risk in {"low", "medium"}:
