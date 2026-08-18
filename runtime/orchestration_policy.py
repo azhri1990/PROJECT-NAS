@@ -61,13 +61,13 @@ class PolicyEngine:
         if risk not in {"low", "medium", "high", "critical"}:
             return PolicyDecision(Decision.DENY, "invalid risk level", cap, "invalid")
         if cap == Capability.EXTERNAL_NETWORK:
-            return PolicyDecision(Decision.DENY, "external network is disabled by default", cap, risk)
+            return PolicyDecision(Decision.DENY, "capability external_network is disabled by default", cap, risk)
         if cap == Capability.SYSTEM_MUTATION:
-            return PolicyDecision(Decision.DENY, "system mutation requires explicit approval", cap, risk)
+            return PolicyDecision(Decision.DENY, "capability system_mutation requires explicit approval", cap, risk)
         if cap == Capability.EXECUTE_SAFE and risk != "low":
-            return PolicyDecision(Decision.REQUIRE_CONFIRMATION, "safe execution requires confirmation at this risk level", cap, risk)
+            return PolicyDecision(Decision.REQUIRE_CONFIRMATION, "capability execute_safe requires confirmation at this risk level", cap, risk)
         if cap in {Capability.MEMORY_WRITE, Capability.NETWORK_LOCAL}:
-            return PolicyDecision(Decision.REQUIRE_CONFIRMATION, f"{cap.value} requires explicit confirmation", cap, risk)
+            return PolicyDecision(Decision.REQUIRE_CONFIRMATION, f"capability {cap.value} requires explicit confirmation", cap, risk)
         if cap in _READ_ONLY and risk in {"low", "medium"}:
             return PolicyDecision(Decision.ALLOW, "allowed by local least-privilege policy", cap, risk)
-        return PolicyDecision(Decision.DENY, "policy has no allow rule for this request", cap, risk)
+        return PolicyDecision(Decision.DENY, f"capability {cap.value} is not allowed by the current policy", cap, risk)
