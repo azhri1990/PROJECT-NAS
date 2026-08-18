@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from runtime.autonomous_learning import AutonomousLearningLoop, LearnedMemory
+from runtime.cognitive_memory import CognitiveMemory, MemoryLifecycle
 from runtime.verified_learning import LearningDecision, LearningType
 
 
@@ -22,6 +23,9 @@ class BrainMemory(LearnedMemory):
 
 class SecondBrain:
     """Personal cognitive memory: verified knowledge plus auditable provenance."""
+
+    MAX_GAP_QUERIES = 20
+    MAX_QUERY_CHARS = 256
 
     def __init__(self, db_path: Path | str = Path("runtime/claude-mem-db/second_brain.sqlite3")) -> None:
         self.db_path = Path(db_path)
@@ -128,3 +132,56 @@ class SecondBrain:
                     )
                 )
             return result
+
+    def _cognitive_memory_for(self, memory_id: int | str) -> CognitiveMemory:
+        if isinstance(memory_id, bool):
+            raise ValueError("memory_id must be an integer or cognitive memory id")
+        if isinstance(memory_id, int):
+            with self._connect() as conn:
+                row = conn.execute("SELECT statement, kind FROM learned_memory WHERE id=?", (memory_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"memory not found: {memory_id}")
+            matches = self.learning.cognitive_memory.recall(row["statement"], limit=20)
+            for memory in matches:
+                if memory.statement == row["statement"] and memory.kind == row["kind"]:
+                    return memory
+            raise KeyError(f"cognitive memory not found: {memory_id}")
+        if isinstance(memory_id, str) and memory_id.strip():
+            return self.learning.cognitive_memory._get(memory_id.strip())
+        raise ValueError("memory_id must be an integer or cognitive memory id")
+
+    def knowledge_gaps(self, queries: list[str]) -> list[str]:
+        """Return bounded queries for which the second brain has no recalled knowledge."""
+        if not isinstance(queries, list):
+            raise ValueError("queries must be a list")
+        if len(queries) > self.MAX_GAP_QUERIES:
+            raise ValueError(f"queries must contain at most {self.MAX_GAP_QUERIES} items")
+        gaps: list[str] = []
+        for query in queries:
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError("knowledge-gap queries must be non-empty strings")
+            normalized = query.strip()
+            if len(normalized) > self.MAX_QUERY_CHARS:
+                raise ValueError(f"knowledge-gap query exceeds {self.MAX_QUERY_CHARS} characters")
+            if not self.learning.recall_cognitive(normalized, limit=1):
+                gaps.append(normalized)
+        return gaps
+
+    def approve_permanent(self, memory_id: int | str, *, approver: str = "user") -> CognitiveMemory:
+        """Explicitly promote existing knowledge to the permanent PINNED lifecycle."""
+        memory = self._cognitive_memory_for(memory_id)
+        if memory.lifecycle not in {MemoryLifecycle.VERIFIED, MemoryLifecycle.TRUSTED, MemoryLifecycle.PINNED}:
+            raise PermissionError("only verified or trusted memory can be pinned")
+        return self.learning.cognitive_memory.approve_pinned(memory.id, approver=approver)
+
+    def memory_history(self, memory_id: int | str) -> list[dict]:
+        memory = self._cognitive_memory_for(memory_id)
+        return self.learning.cognitive_memory.history(memory.id)
+
+    def rollback_memory(self, memory_id: int | str) -> CognitiveMemory:
+        memory = self._cognitive_memory_for(memory_id)
+        return self.learning.cognitive_memory.rollback(memory.id)
+
+    def review_memory(self, *, decay: float = 0.05, floor: float = 0.0) -> dict[str, int]:
+        """Run bounded deterministic cognitive-memory maintenance."""
+        return self.learning.cognitive_memory.review(decay=decay, floor=floor)
