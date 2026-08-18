@@ -1,3 +1,4 @@
+#!/bin/bash
 # PROJECT-NAS zero-cost local certification wrapper.
 # Uses the existing runtime controller and never assumes a green result.
 set -uo pipefail
@@ -134,10 +135,9 @@ else
     exit 1
 fi
 
-# The regression detector itself is part of the current certification schema.
-# Record it as GREEN before comparison so a previous baseline containing this
-# gate is compared against the same current gate set. If comparison fails,
-# overwrite it with RED before persisting the failed certification.
+# The regression detector is part of the certification schema. It must be
+# present in the current gate set before comparing with a baseline that already
+# contains this gate; on a genuine regression it is changed to RED below.
 printf '%s\tGREEN\n' "Regression detection" >> "$GATE_STATUS_FILE"
 
 COMPARISON_OUTPUT="$(
