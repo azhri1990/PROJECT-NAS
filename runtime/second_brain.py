@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from runtime.adaptive_decision import AdaptiveDecisionEngine, DecisionCandidate, DecisionContext, DecisionScore, OutcomeStatus, Strategy
+from runtime.adaptive_decision import AdaptiveDecisionEngine, DecisionCandidate, DecisionContext, DecisionScore, OutcomeStatus, Strategy, StrategyStats
 from runtime.autonomous_learning import AutonomousLearningLoop, LearnedMemory
 from runtime.cognitive_memory import CognitiveMemory, MemoryLifecycle
 from runtime.strategy_memory import StrategyMemory
@@ -40,10 +40,8 @@ class SecondBrain:
 
     def _hydrate_strategy_stats(self) -> None:
         for strategy in self.strategy_memory.list_strategies():
-            stats = self.strategy_memory.strategy_stats(strategy.id)
-            for _ in range(stats.observations):
-                # Rebuild the in-memory scorer from persisted aggregate outcomes deterministically.
-                pass
+            for status in self.strategy_memory.outcomes(strategy.id):
+                self.decision_engine.observe(strategy.id, status)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -52,17 +50,10 @@ class SecondBrain:
 
     def _init_provenance(self) -> None:
         with self._connect() as conn:
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS learning_provenance (
-                    id INTEGER PRIMARY KEY,
-                    memory_id INTEGER,
-                    source TEXT NOT NULL,
-                    context TEXT NOT NULL DEFAULT '',
-                    observed_at TEXT NOT NULL,
-                    verification_status TEXT NOT NULL,
-                    promotion_reason TEXT NOT NULL
-                )"""
-            )
+            conn.execute("""CREATE TABLE IF NOT EXISTS learning_provenance (
+                id INTEGER PRIMARY KEY, memory_id INTEGER, source TEXT NOT NULL,
+                context TEXT NOT NULL DEFAULT '', observed_at TEXT NOT NULL,
+                verification_status TEXT NOT NULL, promotion_reason TEXT NOT NULL)""")
 
     def learn(self, *, kind: LearningType, statement: str, confidence: float, evidence: int, verified: bool, source: str, context: str = "", contradiction: bool = False) -> LearningDecision:
         if not source.strip():
@@ -71,12 +62,9 @@ class SecondBrain:
         with self._connect() as conn:
             row = conn.execute("SELECT id FROM learned_memory WHERE statement = ?", (statement.strip(),)).fetchone()
             memory_id = row["id"] if row else None
-            conn.execute(
-                """INSERT INTO learning_provenance
-                   (memory_id, source, context, observed_at, verification_status, promotion_reason)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (memory_id, source.strip(), context.strip(), datetime.now(timezone.utc).isoformat(), "verified" if verified else "unverified", decision.reason),
-            )
+            conn.execute("""INSERT INTO learning_provenance
+                (memory_id, source, context, observed_at, verification_status, promotion_reason)
+                VALUES (?, ?, ?, ?, ?, ?)""", (memory_id, source.strip(), context.strip(), datetime.now(timezone.utc).isoformat(), "verified" if verified else "unverified", decision.reason))
         return decision
 
     def recall(self, query: str, limit: int = 5) -> list[BrainMemory]:
@@ -86,11 +74,9 @@ class SecondBrain:
         with self._connect() as conn:
             result: list[BrainMemory] = []
             for memory in memories:
-                row = conn.execute(
-                    """SELECT source, context, observed_at, verification_status, promotion_reason
-                       FROM learning_provenance WHERE memory_id = ? AND verification_status = 'verified'
-                       ORDER BY id DESC LIMIT 1""", (memory.id,)
-                ).fetchone()
+                row = conn.execute("""SELECT source, context, observed_at, verification_status, promotion_reason
+                    FROM learning_provenance WHERE memory_id = ? AND verification_status = 'verified'
+                    ORDER BY id DESC LIMIT 1""", (memory.id,)).fetchone()
                 if row:
                     result.append(BrainMemory(memory.id, memory.kind, memory.statement, memory.confidence, memory.evidence, row["source"], row["context"], row["observed_at"], row["verification_status"], row["promotion_reason"]))
             return result
