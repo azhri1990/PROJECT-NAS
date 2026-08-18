@@ -20,10 +20,7 @@ show_history() {
 import os
 from runtime.certification_history import CertificationHistory
 
-history = CertificationHistory(
-    os.environ["HISTORY_FILE"],
-    int(os.environ["HISTORY_MAX_BYTES"]),
-)
+history = CertificationHistory(os.environ["HISTORY_FILE"], int(os.environ["HISTORY_MAX_BYTES"]))
 records = history.records()
 print("=== PROJECT-NAS CERTIFICATION HISTORY ===")
 if not records:
@@ -138,6 +135,43 @@ else
     exit 1
 fi
 
+COMPARISON_OUTPUT="$(
+    HISTORY_FILE="$HISTORY_FILE" HISTORY_MAX_BYTES="$HISTORY_MAX_BYTES" TEST_COUNT="$TEST_COUNT" GATE_STATUS_FILE="$GATE_STATUS_FILE" \
+        python - <<'PY'
+import os
+from runtime.certification_history import CertificationHistory
+from runtime.certification_regression import compare_certifications
+
+history = CertificationHistory(os.environ["HISTORY_FILE"], int(os.environ["HISTORY_MAX_BYTES"]))
+baseline = next((r for r in reversed(history.records()) if r.get("result") == "GREEN"), None)
+
+gates = {}
+with open(os.environ["GATE_STATUS_FILE"], encoding="utf-8") as handle:
+    for line in handle:
+        name, status = line.rstrip("\n").split("\t", 1)
+        gates[name] = status
+
+current = {"result": "GREEN", "tests": int(os.environ["TEST_COUNT"]), "gates": gates}
+report = compare_certifications(baseline, current)
+if report.regression:
+    print("RED")
+    for issue in report.issues:
+        print(issue)
+else:
+    print("GREEN")
+PY
+)"
+
+if [ "${COMPARISON_OUTPUT%%$'\n'*}" = "RED" ]; then
+    printf '%s\tRED\n' "Regression detection" >> "$GATE_STATUS_FILE"
+    echo "✗ Regression detected" >&2
+    echo "$COMPARISON_OUTPUT" | tail -n +2 >&2
+    record_history "RED" "$TEST_COUNT" || echo "⚠ Could not persist certification history." >&2
+    echo "CERTIFICATION: RED"
+    exit 1
+fi
+
+printf '%s\tGREEN\n' "Regression detection" >> "$GATE_STATUS_FILE"
 record_history "GREEN" "$TEST_COUNT" || echo "⚠ Could not persist certification history." >&2
 
 echo "========================================"
