@@ -137,18 +137,21 @@ class CognitiveMemoryStore:
         now = _now()
         memory_id = _memory_id(statement, kind)
         with self._connect() as conn:
-            conn.execute(
-                """INSERT OR IGNORE INTO cognitive_memory
-                   (id, kind, statement, lifecycle, confidence, evidence, created_at, updated_at, source, reference)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (memory_id, kind, statement, MemoryLifecycle.NEW.value, confidence, evidence, now, now, provenance.source, provenance.reference),
-            )
-            conn.execute(
-                """UPDATE cognitive_memory
-                   SET confidence=MAX(confidence, ?), evidence=evidence+?, updated_at=?
-                   WHERE id=?""",
-                (confidence, evidence, now, memory_id),
-            )
+            existing = conn.execute("SELECT id FROM cognitive_memory WHERE id=?", (memory_id,)).fetchone()
+            if existing is None:
+                conn.execute(
+                    """INSERT INTO cognitive_memory
+                       (id, kind, statement, lifecycle, confidence, evidence, created_at, updated_at, source, reference)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (memory_id, kind, statement, MemoryLifecycle.NEW.value, confidence, evidence, now, now, provenance.source, provenance.reference),
+                )
+            else:
+                conn.execute(
+                    """UPDATE cognitive_memory
+                       SET confidence=MAX(confidence, ?), evidence=evidence+?, updated_at=?, source=?, reference=?
+                       WHERE id=?""",
+                    (confidence, evidence, now, provenance.source, provenance.reference, memory_id),
+                )
         return self._get(memory_id)
 
     def promote_verified(self, memory_id: str, *, confidence: float, evidence: int) -> CognitiveMemory:
