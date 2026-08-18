@@ -1,7 +1,11 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from runtime.autonomous_learning import AutonomousLearningLoop
+from runtime.cognitive_memory import MemoryLifecycle
+from runtime.second_brain import SecondBrain
 from runtime.verified_learning import LearningType
 
 
@@ -42,3 +46,67 @@ def test_repeated_verified_learning_consolidates_into_one_memory():
         assert consolidated == 1
         recalled = loop.recall("local-first preferred")
         assert recalled[0].evidence == 5
+
+
+def test_second_brain_detects_knowledge_gaps():
+    with tempfile.TemporaryDirectory() as tmp:
+        brain = SecondBrain(Path(tmp) / "brain.sqlite3")
+        brain.learn(
+            kind=LearningType.FACT,
+            statement="SQLite is the durable local fallback",
+            confidence=0.9,
+            evidence=2,
+            verified=True,
+            source="test",
+        )
+        gaps = brain.knowledge_gaps(["SQLite local fallback", "Kubernetes deployment architecture"])
+        assert gaps == ["Kubernetes deployment architecture"]
+
+
+def test_second_brain_can_pin_verified_memory():
+    with tempfile.TemporaryDirectory() as tmp:
+        brain = SecondBrain(Path(tmp) / "brain.sqlite3")
+        brain.learn(
+            kind=LearningType.FACT,
+            statement="SQLite is the durable local fallback",
+            confidence=0.9,
+            evidence=2,
+            verified=True,
+            source="test",
+        )
+        memory = brain.recall("SQLite durable fallback", 1)[0]
+        pinned = brain.approve_permanent(memory.id, approver="Nash")
+        assert pinned.lifecycle == MemoryLifecycle.PINNED
+
+
+def test_second_brain_exposes_history_and_rollback():
+    with tempfile.TemporaryDirectory() as tmp:
+        brain = SecondBrain(Path(tmp) / "brain.sqlite3")
+        brain.learn(
+            kind=LearningType.FACT,
+            statement="SQLite is the durable local fallback",
+            confidence=0.9,
+            evidence=2,
+            verified=True,
+            source="test",
+        )
+        memory = brain.learning.cognitive_memory.recall("SQLite durable fallback", 1)[0]
+        assert brain.memory_history(memory.id)
+        restored = brain.rollback_memory(memory.id)
+        assert restored.lifecycle == MemoryLifecycle.NEW
+
+
+def test_second_brain_rejects_unverified_permanent_promotion():
+    with tempfile.TemporaryDirectory() as tmp:
+        brain = SecondBrain(Path(tmp) / "brain.sqlite3")
+        brain.learn(
+            kind=LearningType.FACT,
+            statement="Unverified claim",
+            confidence=0.9,
+            evidence=2,
+            verified=False,
+            source="model",
+        )
+        cognitive = brain.learning.cognitive_memory.recall("Unverified claim", 1)[0]
+        with pytest.raises(PermissionError, match="verified or trusted"):
+            brain.approve_permanent(cognitive.id, approver="Nash")
