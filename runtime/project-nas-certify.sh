@@ -7,8 +7,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 CONTROLLER="$SCRIPT_DIR/project-nas.sh"
 RECOVERY="$SCRIPT_DIR/recovery.sh"
+RECOVERY_SELFTEST="$SCRIPT_DIR/recovery-selftest.sh"
 HISTORY_FILE="${PROJECT_NAS_CERT_HISTORY_FILE:-$PROJECT_ROOT/runtime/certification-history.jsonl}"
-HISTORY_MAX_BYTES="${PROJECT_NAS_CERT_HISTORY_MAX_BYTES:-65536}"
+HISTORY_MAX_BYTES="${PROJECT_NAS_CERTIFICATION_HISTORY_MAX_BYTES:-65536}"
 
 fail() {
     echo "✗ $*" >&2
@@ -85,6 +86,7 @@ PY
 }
 
 [ -f "$RECOVERY" ] || fail "Runtime recovery helper is missing."
+[ -f "$RECOVERY_SELFTEST" ] || fail "Recovery self-test is missing."
 
 if ! bash "$RECOVERY"; then
     fail "Runtime recovery failed."
@@ -115,6 +117,8 @@ run_gate "Ollama health" curl -fsS --connect-timeout 2 --max-time 5 "${PROJECT_N
 run_gate "Python compilation" python -m compileall -q runtime tests
 run_gate "Shell syntax" bash -n "$CONTROLLER"
 run_gate "Recovery helper syntax" bash -n "$RECOVERY"
+run_gate "Recovery self-test syntax" bash -n "$RECOVERY_SELFTEST"
+run_gate "Controlled recovery simulation" bash "$RECOVERY_SELFTEST"
 run_gate "Repository integrity" git -C "$PROJECT_ROOT" diff --check
 
 echo "→ Regression suite"
