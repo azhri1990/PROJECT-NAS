@@ -44,6 +44,8 @@ class CertificationHistory:
             raise ValueError("result must be GREEN or RED")
         if tests < 0:
             raise ValueError("tests must be non-negative")
+        if not isinstance(gates, dict):
+            raise ValueError("gates must be an object")
 
         record = {
             "timestamp": timestamp,
@@ -52,6 +54,10 @@ class CertificationHistory:
             "tests": tests,
             "gates": gates,
         }
+        encoded = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        if len(encoded) > self.max_bytes:
+            raise ValueError("certification record exceeds history byte bound")
+
         records = self.records()
         records.append(record)
         lines = [json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n" for item in records]
