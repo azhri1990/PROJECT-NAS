@@ -87,7 +87,7 @@ class LearningQualityEngine:
         floor = self._confidence(floor)
         if floor > confidence:
             raise ValueError("floor must not exceed confidence")
-        return max(floor, confidence - decay)
+        return round(max(floor, confidence - decay), 12)
 
     def is_stale(self, confidence: float) -> bool:
         return self._confidence(confidence) < self.STALE_THRESHOLD
