@@ -1,6 +1,11 @@
-from 07-AUTOMATION.bob.device_registry import Device, DeviceRegistry
-from 07-AUTOMATION.bob.job_queue import JobQueue, JobState
-from 07-AUTOMATION.bob.task_router import TaskRouter
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "07-AUTOMATION"))
+
+from bob.device_registry import Device, DeviceRegistry
+from bob.job_queue import JobQueue, JobState
+from bob.task_router import TaskRouter
 
 
 def test_routes_to_lowest_cost_online_worker() -> None:
