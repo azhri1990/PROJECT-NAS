@@ -1,5 +1,6 @@
 import pytest
 
+from runtime.approval import ApprovalRequired
 from runtime.cognitive_orchestrator import CognitiveOrchestrator
 from runtime.orchestration_policy import Capability
 from runtime.orchestration_tools import ToolRegistry, ToolSpec
@@ -118,3 +119,28 @@ def test_memory_query_validation_is_bounded():
         orchestrator.recall_context("runtime", 21)
     with pytest.raises(ValueError):
         orchestrator.recall_context("", 5)
+
+
+def test_consequential_orchestration_requires_and_accepts_exact_approval():
+    brain = Brain()
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="shell.exec",
+            capability=Capability.EXECUTE_SAFE,
+            risk="low",
+            input_schema={"type": "object", "additionalProperties": False},
+            handler=lambda payload: {"status": "executed"},
+        )
+    )
+    orchestrator = CognitiveOrchestrator(brain=brain, registry=registry)
+
+    with pytest.raises(ApprovalRequired) as exc:
+        orchestrator.execute(tool_name="shell.exec", payload={})
+
+    proposal = orchestrator.approval.require(exc.value.proposal_id)
+    receipt = orchestrator.approval.approve(proposal.proposal_id)
+    outcome = orchestrator.execute(tool_name="shell.exec", payload={}, approval=receipt)
+
+    assert outcome.verification.ok is False
+    assert outcome.result == {"status": "executed"}

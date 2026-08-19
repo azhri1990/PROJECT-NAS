@@ -61,3 +61,32 @@ def test_inputs_are_bounded_and_unknown_observation_is_rejected(tmp_path: Path):
         loop.observe("x" * 1025, "local", "normal", "test")
     with pytest.raises(KeyError):
         loop.record_outcome("missing", OutcomeStatus.SUCCESS)
+
+def test_learning_feedback_is_applied_to_learning_confidence(tmp_path: Path):
+    loop = make_loop(tmp_path)
+
+    captured = {}
+    original = loop.quality.evaluate
+
+    def capture_quality(**kwargs):
+        captured["confidence"] = kwargs["confidence"]
+        return original(**kwargs)
+
+    loop.quality.evaluate = capture_quality
+
+    observation = loop.observe(
+        "answer task",
+        "local",
+        "normal",
+        "test",
+    )
+
+    loop.record_outcome(
+        observation,
+        OutcomeStatus.SUCCESS,
+        evidence=1,
+        lesson="feedback-adjusted lesson",
+    )
+
+    assert captured["confidence"] > 0.75
+    assert captured["confidence"] <= 1.0

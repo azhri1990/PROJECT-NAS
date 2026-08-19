@@ -24,18 +24,28 @@ class StrategyMemory:
             conn.execute("INSERT OR IGNORE INTO strategies VALUES (?, ?, ?, ?, ?)", (strategy.id, strategy.name, strategy.description, strategy.risk, strategy.cost))
         return strategy.id
 
-    def record_outcome(self, strategy_id: str, status: OutcomeStatus) -> None:
-        if not strategy_id.strip():
+    def resolve_strategy_id(self, identifier: str) -> str:
+        """Resolve either a persisted strategy id or its human-readable name."""
+        if not isinstance(identifier, str) or not identifier.strip():
             raise ValueError("strategy_id must not be empty")
+        normalized = identifier.strip()
         with self._connect() as conn:
-            if conn.execute("SELECT 1 FROM strategies WHERE id=?", (strategy_id,)).fetchone() is None:
-                raise KeyError(f"strategy not found: {strategy_id}")
-            if status is not OutcomeStatus.UNKNOWN:
-                conn.execute("INSERT INTO outcomes(strategy_id, status) VALUES (?, ?)", (strategy_id, status.value))
+            row = conn.execute("SELECT id FROM strategies WHERE id=? OR name=? LIMIT 1", (normalized, normalized)).fetchone()
+        if row is None:
+            raise KeyError(f"strategy not found: {normalized}")
+        return str(row[0])
+
+    def record_outcome(self, strategy_id: str, status: OutcomeStatus) -> None:
+        resolved_id = self.resolve_strategy_id(strategy_id)
+        if status is OutcomeStatus.UNKNOWN:
+            return
+        with self._connect() as conn:
+            conn.execute("INSERT INTO outcomes(strategy_id, status) VALUES (?, ?)", (resolved_id, status.value))
 
     def outcomes(self, strategy_id: str) -> list[OutcomeStatus]:
+        resolved_id = self.resolve_strategy_id(strategy_id)
         with self._connect() as conn:
-            rows = conn.execute("SELECT status FROM outcomes WHERE strategy_id=? ORDER BY id", (strategy_id,)).fetchall()
+            rows = conn.execute("SELECT status FROM outcomes WHERE strategy_id=? ORDER BY id", (resolved_id,)).fetchall()
         return [OutcomeStatus(row[0]) for row in rows]
 
     def list_strategies(self, limit: int = 50) -> list[Strategy]:

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from runtime.cognitive_memory import CognitiveMemory, CognitiveMemoryStore, MemoryProvenance
+from runtime.learning_quality import LearningQualityEngine
 from runtime.verified_learning import LearningCandidate, LearningType, VerifiedLearningEngine, LearningDecision
 
 
@@ -21,7 +22,7 @@ class LearnedMemory:
 
 
 class AutonomousLearningLoop:
-    """Capture, verify, persist, recall, consolidate, and revalidate lessons without self-modifying code."""
+    """Capture, verify, calibrate, persist, recall, consolidate, and revalidate lessons without self-modifying code."""
 
     def __init__(
         self,
@@ -31,6 +32,7 @@ class AutonomousLearningLoop:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = VerifiedLearningEngine()
+        self.quality = LearningQualityEngine()
         self.cognitive_memory = CognitiveMemoryStore(
             cognitive_db_path or self.db_path.parent / "cognitive_memory.sqlite3"
         )
@@ -84,7 +86,16 @@ class AutonomousLearningLoop:
                 rows = conn.execute("SELECT statement FROM learned_memory").fetchall()
             contradiction = any(self._contradicts(normalized, row["statement"]) for row in rows)
 
-        candidate = LearningCandidate(kind, normalized, confidence, evidence, contradiction)
+        quality = self.quality.evaluate(
+            confidence=confidence,
+            evidence=evidence,
+            verified=verified,
+            contradiction=contradiction,
+        )
+        if not quality.promote:
+            return LearningDecision(False, quality.reason)
+
+        candidate = LearningCandidate(kind, normalized, quality.confidence, evidence, contradiction)
         decision = self.engine.evaluate(candidate, verified=verified)
         if not decision.promoted:
             return decision
@@ -167,7 +178,7 @@ class AutonomousLearningLoop:
             rows = conn.execute("SELECT id, confidence FROM learned_memory").fetchall()
             changed = 0
             for row in rows:
-                new_confidence = max(floor, float(row["confidence"]) - decay)
+                new_confidence = self.quality.decay_confidence(float(row["confidence"]), decay=decay, floor=floor)
                 if new_confidence != float(row["confidence"]):
                     conn.execute("UPDATE learned_memory SET confidence=? WHERE id=?", (new_confidence, row["id"]))
                     changed += 1
