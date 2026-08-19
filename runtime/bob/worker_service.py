@@ -17,7 +17,7 @@ from .worker_registry import WorkerRegistry
 
 try:
     from fastapi import FastAPI, Header, HTTPException
-except ImportError:  # pragma: no cover - runtime dependency is part of PROJECT-NAS
+except ImportError:  # pragma: no cover
     FastAPI = None  # type: ignore[assignment]
 
 
@@ -26,8 +26,7 @@ def _auth_identity(authorization: str | None, expected: str | None) -> str:
         raise RuntimeError("worker authentication is not configured")
     if not authorization or not authorization.startswith("Bearer "):
         raise PermissionError("authentication required")
-    token = authorization[7:].strip()
-    if token != expected:
+    if authorization[7:].strip() != expected:
         raise PermissionError("invalid authentication token")
     return "authenticated-worker"
 
@@ -42,14 +41,7 @@ _CAPABILITY_MAP = {
 
 
 class WorkerService:
-    def __init__(
-        self,
-        registry: WorkerRegistry,
-        leases: JobLeaseStore,
-        audit: WorkerAudit | None = None,
-        auth_token: str | None = None,
-        policy: PolicyEngine | None = None,
-    ) -> None:
+    def __init__(self, registry: WorkerRegistry, leases: JobLeaseStore, audit: WorkerAudit | None = None, auth_token: str | None = None, policy: PolicyEngine | None = None) -> None:
         self.registry = registry
         self.leases = leases
         self.audit = audit or WorkerAudit()
@@ -76,14 +68,7 @@ class WorkerService:
         if policy_capability is None:
             self.audit.record("job_denied", worker_id, job_id, {"reason": "unknown capability"})
             raise PermissionError("unknown capability denied by NAS policy")
-        decision = self.policy.evaluate(
-            ToolRequest(
-                tool_name="bob.worker.claim",
-                capability=policy_capability,
-                risk=RiskLevel.LOW,
-                input={"job_id": job_id, "worker_id": worker_id},
-            )
-        )
+        decision = self.policy.evaluate(ToolRequest("bob.worker.claim", policy_capability, RiskLevel.LOW, {"job_id": job_id, "worker_id": worker_id}))
         if not decision.allowed:
             self.audit.record("job_denied", worker_id, job_id, {"reason": decision.reason})
             raise PermissionError(decision.reason)
@@ -95,6 +80,14 @@ class WorkerService:
         completion = self.leases.complete(result.lease_id, worker_id, result, now)
         self.audit.record("job_completed", worker_id, result.job_id, {"status": completion.status})
         return {"job_id": completion.job_id, "lease_id": completion.lease_id, "status": completion.status}
+
+    def recover(self, now: float) -> list[str]:
+        expired = self.leases.expire(now)
+        job_ids: list[str] = []
+        for lease in expired:
+            job_ids.append(lease.job_id)
+            self.audit.record("job_requeued", lease.worker_id, lease.job_id, {"lease_id": lease.lease_id})
+        return job_ids
 
 
 def create_worker_app(service: WorkerService):
@@ -114,12 +107,7 @@ def create_worker_app(service: WorkerService):
     def register(payload: dict[str, Any], authorization: str | None = Header(default=None)):
         require_auth(authorization)
         try:
-            registration = WorkerRegistration(
-                worker_id=str(payload.get("worker_id", "")),
-                platform=payload.get("platform"),
-                capabilities=frozenset(payload.get("capabilities", [])),
-                resources=dict(payload.get("resources", {})),
-            )
+            registration = WorkerRegistration(str(payload.get("worker_id", "")), payload.get("platform"), frozenset(payload.get("capabilities", [])), dict(payload.get("resources", {})))
             return service.register(registration, float(payload.get("now", 0.0)))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -137,12 +125,7 @@ def create_worker_app(service: WorkerService):
     def claim(payload: dict[str, Any], authorization: str | None = Header(default=None)):
         require_auth(authorization)
         try:
-            return service.claim(
-                str(payload.get("job_id", "")),
-                str(payload.get("worker_id", "")),
-                str(payload.get("capability", "")),
-                float(payload.get("now", 0.0)),
-            )
+            return service.claim(str(payload.get("job_id", "")), str(payload.get("worker_id", "")), str(payload.get("capability", "")), float(payload.get("now", 0.0)))
         except (KeyError, PermissionError, ValueError) as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -150,12 +133,7 @@ def create_worker_app(service: WorkerService):
     def result(payload: dict[str, Any], authorization: str | None = Header(default=None)):
         require_auth(authorization)
         try:
-            value = JobResult(
-                job_id=str(payload.get("job_id", "")),
-                lease_id=str(payload.get("lease_id", "")),
-                status=payload.get("status"),
-                output=dict(payload.get("output", {})),
-            )
+            value = JobResult(str(payload.get("job_id", "")), str(payload.get("lease_id", "")), payload.get("status"), dict(payload.get("output", {})))
             return service.result(str(payload.get("worker_id", "")), value, float(payload.get("now", 0.0)))
         except (KeyError, PermissionError, ValueError) as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -163,9 +141,6 @@ def create_worker_app(service: WorkerService):
     @app.get("/workers")
     def workers(authorization: str | None = Header(default=None)):
         require_auth(authorization)
-        return [
-            {"worker_id": w.worker_id, "platform": w.platform, "status": w.status, "capabilities": sorted(w.capabilities), "last_seen": w.last_seen}
-            for w in service.registry.all()
-        ]
+        return [{"worker_id": w.worker_id, "platform": w.platform, "status": w.status, "capabilities": sorted(w.capabilities), "last_seen": w.last_seen} for w in service.registry.all()]
 
     return app
