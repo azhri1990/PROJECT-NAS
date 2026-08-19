@@ -17,6 +17,31 @@ PROJECT-BOB is the mobile-first orchestration layer for PROJECT-NAS.
 - `tablet`: review, documentation, lightweight jobs.
 - `pc`: heavy build/test/runtime jobs.
 
+## BOB-2 mobile command channel
+
+The command API is a private FastAPI surface exposed by `runtime/bob_command_api.py`.
+Set `PROJECT_BOB_AUTH_TOKEN` on the BOB host. Clients send `Authorization: Bearer <token>`.
+
+Endpoints:
+
+- `GET /health` — liveness; no authentication.
+- `POST /jobs` — submit a bounded task and capability.
+- `GET /jobs/{job_id}` — inspect state.
+- `POST /jobs/{job_id}/cancel` — cancel before execution begins.
+- `GET /workers` — list registered workers.
+- `POST /workers/heartbeat` — register/update worker availability.
+
+Example mobile request:
+
+```bash
+curl -H "Authorization: Bearer $PROJECT_BOB_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"task":"inspect repository status","capability":"read_repository"}' \
+  http://127.0.0.1:8000/jobs
+```
+
+The command API does not expose arbitrary shell execution. Submitted capabilities are evaluated by the existing `PolicyEngine`; process execution, network access, and repository writes remain denied by default.
+
 ## Safety boundary
 
 BOB may select a worker and create a job specification, but execution authority remains with the existing PROJECT-NAS policy/tool gateway. No credential, bearer token, unrestricted shell permission, or policy override belongs in the BOB registry.
