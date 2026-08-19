@@ -67,7 +67,10 @@ class JobLeaseStore:
         return record
 
     def expire(self, now: float) -> list[JobLease]:
-        return [lease for lease in self._leases.values() if lease.expires_at < now and lease.lease_id not in self._completed]
+        expired = [lease for lease in self._leases.values() if lease.expires_at < now and lease.lease_id not in self._completed]
+        for lease in expired:
+            self._leases.pop(lease.lease_id, None)
+        return expired
 
     def get(self, lease_id: str) -> JobLease | None:
         return self._leases.get(lease_id)
