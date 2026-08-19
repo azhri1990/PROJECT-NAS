@@ -15,6 +15,7 @@ class JobState(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,8 @@ class JobQueue:
         self._jobs: dict[str, Job] = {}
 
     def create(self, task: str, capability: str) -> Job:
+        if not isinstance(task, str) or not isinstance(capability, str):
+            raise ValueError("task and capability must be strings")
         if not task.strip() or not capability.strip():
             raise ValueError("task and capability must not be empty")
         job = Job(uuid4().hex, task.strip(), capability.strip())
@@ -46,6 +49,12 @@ class JobQueue:
         job = replace(current, **changes)
         self._jobs[job_id] = job
         return job
+
+    def cancel(self, job_id: str) -> Job:
+        current = self._jobs[job_id]
+        if current.state in {JobState.RUNNING, JobState.SUCCEEDED, JobState.FAILED, JobState.BLOCKED, JobState.CANCELLED}:
+            raise ValueError(f"job cannot be cancelled from state: {current.state.value}")
+        return self.update(job_id, state=JobState.CANCELLED, reason="cancelled by operator")
 
     def all(self) -> tuple[Job, ...]:
         return tuple(self._jobs.values())
