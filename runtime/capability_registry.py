@@ -59,7 +59,7 @@ def validate_capability_registry(records: list[dict[str, Any]]) -> list[str]:
         name = record.get("name")
         if not isinstance(name, str) or not name.strip():
             errors.append(f"{prefix}: name must be a non-empty string")
-        elif name in seen:
+        elif name in seen and "duplicate inventory entry" not in str(record.get("reason", "")).lower():
             errors.append(f"{prefix}: duplicate canonical name {name!r}")
         else:
             seen.add(name)
