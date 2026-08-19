@@ -34,19 +34,22 @@ class BobCommandService:
         self._lock = threading.RLock()
 
     def _record(self, event: str, **data: Any) -> None:
-        item = {"event": event, **data}
-        self.audit.append(item)
+        self.audit.append({"event": event, **data})
         if len(self.audit) > self._audit_limit:
             del self.audit[: len(self.audit) - self._audit_limit]
 
     @staticmethod
     def _capability(value: str) -> Capability:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("capability must be a non-empty string")
         try:
-            return Capability(value)
+            return Capability(value.strip())
         except ValueError as exc:
             raise ValueError(f"unknown capability: {value}") from exc
 
     def submit(self, *, task: str, capability: str) -> dict[str, Any]:
+        if not isinstance(task, str) or not task.strip() or len(task.strip()) > 4000:
+            raise ValueError("task must be a non-empty string of at most 4000 characters")
         with self._lock:
             cap = self._capability(capability)
             request = ToolRequest(
@@ -55,8 +58,6 @@ class BobCommandService:
                 risk=RiskLevel.LOW,
                 input={"task": task.strip()},
             )
-            if not isinstance(task, str) or not task.strip() or len(task.strip()) > 4000:
-                raise ValueError("task must be a non-empty string of at most 4000 characters")
             decision = self.policy.evaluate(request)
             self._record("policy", allowed=decision.allowed, capability=cap.value, reason=decision.reason)
             if not decision.allowed:
@@ -65,8 +66,7 @@ class BobCommandService:
             self.queue.update(job.job_id, state=JobState.QUEUED)
             route = self.router.route(self.queue.get(job.job_id))
             self._record("submit", job_id=job.job_id, state=route.state.value, worker_id=route.worker_id)
-            current = self.queue.get(job.job_id)
-            return self._job(current)
+            return self._job(self.queue.get(job.job_id))
 
     def status(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -77,24 +77,23 @@ class BobCommandService:
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._lock:
-            job = self.queue.get(job_id)
-            if job is None:
-                raise KeyError(job_id)
-            if job.state in {JobState.RUNNING, JobState.SUCCEEDED, JobState.FAILED, JobState.BLOCKED, JobState.CANCELLED}:
-                raise ValueError(f"job cannot be cancelled from state: {job.state.value}")
-            updated = self.queue.update(job_id, state=JobState.CANCELLED, reason="cancelled by operator")
+            try:
+                updated = self.queue.cancel(job_id)
+            except KeyError as exc:
+                raise KeyError(job_id) from exc
             self._record("cancel", job_id=job_id)
             return self._job(updated)
 
     def heartbeat(self, *, device_id: str, platform: str, capabilities: list[str], online: bool = True, cost: float = 0.0) -> dict[str, Any]:
-        if not device_id.strip() or not platform.strip():
-            raise ValueError("device_id and platform must not be empty")
-        if not isinstance(capabilities, list) or any(not isinstance(item, str) or not item.strip() for item in capabilities):
-            raise ValueError("capabilities must be a list of non-empty strings")
+        if not isinstance(device_id, str) or not device_id.strip() or not isinstance(platform, str) or not platform.strip():
+            raise ValueError("device_id and platform must be non-empty strings")
+        if not isinstance(capabilities, list) or len(capabilities) > 32 or any(not isinstance(item, str) or not item.strip() for item in capabilities):
+            raise ValueError("capabilities must be a list of at most 32 non-empty strings")
         if not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0:
             raise ValueError("cost must be a non-negative number")
         with self._lock:
-            self.devices.register(Device(device_id=device_id.strip(), platform=platform.strip(), capabilities=frozenset(capabilities), online=bool(online), cost=float(cost)))
+            normalized = [item.strip() for item in capabilities]
+            self.devices.register(Device(device_id=device_id.strip(), platform=platform.strip(), capabilities=frozenset(normalized), online=bool(online), cost=float(cost)))
             self._record("heartbeat", device_id=device_id.strip(), online=bool(online))
             return self.worker(device_id.strip())
 
