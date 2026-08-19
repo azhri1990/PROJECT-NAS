@@ -43,6 +43,14 @@ def test_lease_completion_is_idempotent() -> None:
     assert second == first
 
 
+def test_expired_lease_is_reclaimable() -> None:
+    leases = JobLeaseStore(ttl_seconds=30)
+    first = leases.claim("job-1", "android-1", now=100)
+    assert leases.expire(131) == [first]
+    second = leases.claim("job-1", "pc-1", now=132)
+    assert second.worker_id == "pc-1"
+
+
 def test_policy_denial_prevents_execute_process_claim() -> None:
     registry = WorkerRegistry()
     registry.register_worker(WorkerRegistration("pc-1", "pc", frozenset({"execute_process"})), now=100)
@@ -61,8 +69,20 @@ def test_capability_is_not_policy_authority() -> None:
 
 def test_allowed_read_claim_and_result() -> None:
     registry = WorkerRegistry()
+    audit = WorkerAudit()
+    service = WorkerService(registry, JobLeaseStore(ttl_seconds=30), audit, auth_token="secret")
     registry.register_worker(WorkerRegistration("android-1", "android", frozenset({"read_repository"})), now=100)
-    service = WorkerService(registry, JobLeaseStore(ttl_seconds=30), WorkerAudit(), auth_token="secret")
     claim = service.claim("job-1", "android-1", "read_repository", now=101)
     result = service.result("android-1", JobResult("job-1", claim["lease_id"], "succeeded", {"ok": True}), now=102)
     assert result["status"] == "succeeded"
+    assert any(event.event_type == "job_completed" for event in audit.events())
+
+
+def test_recovery_releases_expired_job_and_audits_requeue() -> None:
+    audit = WorkerAudit()
+    service = WorkerService(WorkerRegistry(), JobLeaseStore(ttl_seconds=30), audit, auth_token="secret")
+    service.registry.register_worker(WorkerRegistration("android-1", "android", frozenset({"read_repository"})), now=100)
+    service.claim("job-1", "android-1", "read_repository", now=100)
+    assert service.recover(131) == ["job-1"]
+    assert service.recover(132) == []
+    assert any(event.event_type == "job_requeued" for event in audit.events())
