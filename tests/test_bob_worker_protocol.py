@@ -1,15 +1,16 @@
-import sys
 from pathlib import Path
+import sys
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "07-AUTOMATION"))
+ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT))
 
-from bob.audit import WorkerAudit
-from bob.job_lease import JobLeaseStore
-from bob.worker_protocol import JobResult, WorkerRegistration
-from bob.worker_registry import WorkerRegistry
-from bob.worker_service import WorkerService
+from runtime.bob.audit import WorkerAudit
+from runtime.bob.job_lease import JobLeaseStore
+from runtime.bob.worker_protocol import JobResult, WorkerRegistration
+from runtime.bob.worker_registry import WorkerRegistry
+from runtime.bob.worker_service import WorkerService
 
 
 def test_worker_registration_contract_requires_identity_and_supported_platform() -> None:
