@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from runtime.policy import Capability, PolicyEngine, RiskLevel, ToolRequest
+
 from .audit import WorkerAudit
 from .job_lease import JobLeaseStore
 from .worker_protocol import JobResult, WorkerRegistration
@@ -21,21 +23,38 @@ except ImportError:  # pragma: no cover - runtime dependency is part of PROJECT-
 
 def _auth_identity(authorization: str | None, expected: str | None) -> str:
     if not expected:
-        raise HTTPException(status_code=503, detail="worker authentication is not configured")
+        raise RuntimeError("worker authentication is not configured")
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="authentication required")
+        raise PermissionError("authentication required")
     token = authorization[7:].strip()
     if token != expected:
-        raise HTTPException(status_code=401, detail="invalid authentication token")
+        raise PermissionError("invalid authentication token")
     return "authenticated-worker"
 
 
+_CAPABILITY_MAP = {
+    "read_repository": Capability.READ_REPOSITORY,
+    "read_runtime": Capability.READ_RUNTIME,
+    "write_repository": Capability.WRITE_REPOSITORY,
+    "execute_process": Capability.EXECUTE_PROCESS,
+    "network_access": Capability.NETWORK_ACCESS,
+}
+
+
 class WorkerService:
-    def __init__(self, registry: WorkerRegistry, leases: JobLeaseStore, audit: WorkerAudit | None = None, auth_token: str | None = None) -> None:
+    def __init__(
+        self,
+        registry: WorkerRegistry,
+        leases: JobLeaseStore,
+        audit: WorkerAudit | None = None,
+        auth_token: str | None = None,
+        policy: PolicyEngine | None = None,
+    ) -> None:
         self.registry = registry
         self.leases = leases
         self.audit = audit or WorkerAudit()
         self.auth_token = auth_token if auth_token is not None else os.getenv("PROJECT_BOB_AUTH_TOKEN")
+        self.policy = policy or PolicyEngine()
 
     def register(self, registration: WorkerRegistration, now: float = 0.0) -> dict[str, Any]:
         record = self.registry.register_worker(registration, now=now)
@@ -47,15 +66,27 @@ class WorkerService:
         self.audit.record("worker_heartbeat", worker_id)
         return {"worker_id": record.worker_id, "status": record.status, "last_seen": record.last_seen}
 
-    def claim(self, job_id: str, worker_id: str, capability: str, now: float, policy_allowed: bool) -> dict[str, Any]:
+    def claim(self, job_id: str, worker_id: str, capability: str, now: float) -> dict[str, Any]:
         worker = self.registry.get(worker_id)
         if worker is None or worker.status != "available":
             raise PermissionError("worker is not registered and available")
         if not worker.supports(capability):
             raise PermissionError("worker does not advertise required capability")
-        if not policy_allowed:
-            self.audit.record("job_denied", worker_id, job_id, {"reason": "policy denied"})
-            raise PermissionError("NAS policy denied worker job claim")
+        policy_capability = _CAPABILITY_MAP.get(capability)
+        if policy_capability is None:
+            self.audit.record("job_denied", worker_id, job_id, {"reason": "unknown capability"})
+            raise PermissionError("unknown capability denied by NAS policy")
+        decision = self.policy.evaluate(
+            ToolRequest(
+                tool_name="bob.worker.claim",
+                capability=policy_capability,
+                risk=RiskLevel.LOW,
+                input={"job_id": job_id, "worker_id": worker_id},
+            )
+        )
+        if not decision.allowed:
+            self.audit.record("job_denied", worker_id, job_id, {"reason": decision.reason})
+            raise PermissionError(decision.reason)
         lease = self.leases.claim(job_id, worker_id, now)
         self.audit.record("job_claimed", worker_id, job_id, {"lease_id": lease.lease_id})
         return {"job_id": lease.job_id, "lease_id": lease.lease_id, "expires_at": lease.expires_at}
@@ -72,18 +103,26 @@ def create_worker_app(service: WorkerService):
     app = FastAPI(title="PROJECT-BOB Worker Service")
 
     def require_auth(authorization: str | None) -> None:
-        _auth_identity(authorization, service.auth_token)
+        try:
+            _auth_identity(authorization, service.auth_token)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     @app.post("/workers/register")
     def register(payload: dict[str, Any], authorization: str | None = Header(default=None)):
         require_auth(authorization)
-        registration = WorkerRegistration(
-            worker_id=str(payload.get("worker_id", "")),
-            platform=payload.get("platform"),
-            capabilities=frozenset(payload.get("capabilities", [])),
-            resources=dict(payload.get("resources", {})),
-        )
-        return service.register(registration, float(payload.get("now", 0.0)))
+        try:
+            registration = WorkerRegistration(
+                worker_id=str(payload.get("worker_id", "")),
+                platform=payload.get("platform"),
+                capabilities=frozenset(payload.get("capabilities", [])),
+                resources=dict(payload.get("resources", {})),
+            )
+            return service.register(registration, float(payload.get("now", 0.0)))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/workers/heartbeat")
     def heartbeat(payload: dict[str, Any], authorization: str | None = Header(default=None)):
@@ -103,7 +142,6 @@ def create_worker_app(service: WorkerService):
                 str(payload.get("worker_id", "")),
                 str(payload.get("capability", "")),
                 float(payload.get("now", 0.0)),
-                bool(payload.get("policy_allowed", False)),
             )
         except (KeyError, PermissionError, ValueError) as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
