@@ -42,6 +42,12 @@ curl -H "Authorization: Bearer $PROJECT_BOB_AUTH_TOKEN" \
 
 The command API does not expose arbitrary shell execution. Submitted capabilities are evaluated by the existing `PolicyEngine`; process execution, network access, and repository writes remain denied by default.
 
+## BOB-3 autonomous orchestration
+
+`07-AUTOMATION/bob/autonomous_orchestrator.py` adds deterministic, resource-aware scheduling. Workers report a `ResourceSnapshot`; BOB may defer work when CPU, memory, or local inference requirements are not satisfied. Failures use a bounded retry budget and transition to a failed/blocked state when exhausted.
+
+BOB-3 remains an orchestrator: it does not execute arbitrary commands or grant permissions. Worker execution and PROJECT-NAS `PolicyEngine`/`ToolGateway` remain authoritative.
+
 ## Safety boundary
 
 BOB may select a worker and create a job specification, but execution authority remains with the existing PROJECT-NAS policy/tool gateway. No credential, bearer token, unrestricted shell permission, or policy override belongs in the BOB registry.
