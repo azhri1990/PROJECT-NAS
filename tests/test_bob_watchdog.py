@@ -1,5 +1,6 @@
 import pytest
 
+from runtime.bob_learning import LearningLedger
 from runtime.bob_supervisor import PersistentSupervisor
 from runtime.bob_watchdog import BoundedWatchdog
 
@@ -53,17 +54,27 @@ def test_restart_cooldown_prevents_retry_storm(tmp_path):
     assert decision.restart_allowed is False
 
 
-def test_restart_failure_escalates_and_supervisor_is_offline(tmp_path):
+def test_restart_failure_records_lesson_and_escalates_repeat(tmp_path):
     supervisor = PersistentSupervisor("pc-1", tmp_path / "state.json")
     supervisor.heartbeat(now=100.0)
-    watchdog = BoundedWatchdog(supervisor, max_restarts=3, cooldown_seconds=0)
+    ledger = LearningLedger(tmp_path / "learning.json")
+    watchdog = BoundedWatchdog(
+        supervisor,
+        max_restarts=3,
+        cooldown_seconds=0,
+        learning=ledger,
+    )
 
     def fail():
         raise RuntimeError("crash")
 
-    decision = watchdog.act(now=200.0, restart=fail)
+    first = watchdog.act(now=200.0, restart=fail)
+    second = watchdog.inspect(now=300.0)
 
-    assert decision.action == "escalate"
+    assert first.action == "escalate"
+    assert second.action == "escalate"
+    assert second.reason == "known_failure_class"
+    assert ledger.known("heartbeat_timeout")
     assert supervisor.state.status == "offline"
     assert supervisor.state.restart_count == 1
 
