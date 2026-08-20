@@ -57,6 +57,8 @@ class AutonomousOrchestrator:
 
         snapshot = self.resources.get(worker_id)
         if snapshot is None or not snapshot.online:
+            attempt += 1
+            self._attempts[job.job_id] = attempt
             return self._recover(job, "worker offline", attempt)
         if snapshot.cpu_load > requirements.max_cpu_load:
             return OrchestrationDecision(job.job_id, RecoveryAction.DEFER, worker_id, "worker CPU load too high", attempt)
