@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from runtime.autopilot_governance import AutopilotGovernance, DecisionClass
 from runtime.policy import Capability, PolicyEngine, RiskLevel, ToolRequest
 
 MAX_MEMORY_LIMIT = 20
@@ -23,7 +24,7 @@ class ToolSpec:
 
 
 class ToolGateway:
-    """Registry and policy gate for bounded PROJECT-NAS tool execution."""
+    """Registry and policy/governance gate for bounded PROJECT-NAS tool execution."""
 
     ALLOWED_NAMESPACES = frozenset({"memory", "prompt", "status"})
 
@@ -31,6 +32,7 @@ class ToolGateway:
         if audit_limit < 1:
             raise ValueError("audit_limit must be positive")
         self.policy = policy or PolicyEngine()
+        self.governance = AutopilotGovernance(self.policy)
         self._tools: dict[str, ToolSpec] = {}
         self.audit_log: list[dict[str, Any]] = []
         self._audit_limit = audit_limit
@@ -64,11 +66,12 @@ class ToolGateway:
             risk=spec.risk,
             input=validated,
         )
-        decision = self.policy.evaluate(request)
-        self._record_audit(name, decision.allowed, decision.reason)
-        if not decision.allowed:
-            raise PermissionError(decision.reason)
+        governance = self.governance.classify(request)
+        if governance.classification is not DecisionClass.AUTO:
+            self._record_audit(name, False, governance.reason)
+            raise PermissionError(governance.reason)
 
+        self._record_audit(name, True, governance.reason)
         executor = ThreadPoolExecutor(max_workers=1)
         future = executor.submit(spec.handler, validated)
         try:
