@@ -59,6 +59,22 @@ def test_orchestrator_starts_eligible_worker():
     assert queue.get(job.job_id).worker_id == "pc"
 
 
+def test_offline_worker_consumes_retry_budget():
+    queue, resources, orchestrator = make_system()
+    job = queue.create("build", "process")
+    resources.update("pc", ResourceSnapshot(online=False))
+
+    first = orchestrator.attempt(job, worker_id="pc")
+    second = orchestrator.attempt(queue.get(job.job_id), worker_id="pc")
+    third = orchestrator.attempt(queue.get(job.job_id), worker_id="pc")
+
+    assert first.action == RecoveryAction.RETRY
+    assert second.action == RecoveryAction.RETRY
+    assert third.action == RecoveryAction.BLOCK
+    assert third.attempt == 3
+    assert queue.get(job.job_id).state == JobState.FAILED
+
+
 def test_failure_retries_then_fails_closed():
     queue, _, orchestrator = make_system()
     job = queue.create("build", "process")
