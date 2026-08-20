@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ class AutopilotLoop:
     def _load_queue(self) -> list[dict[str, Any]]:
         if not self.queue_path.exists():
             return []
-        data = json.loads(self.queue_path.read_text(encoding="utf-8"))
+        data = json.loads(self.queue_path.read_text(encoding="utf-8-sig"))
         if not isinstance(data, list):
             raise ValueError("autopilot queue must be a JSON list")
         return data
@@ -36,6 +37,12 @@ class AutopilotLoop:
         }
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, sort_keys=True) + "\n")
+
+    def _write_queue(self, remaining: list[dict[str, Any]]) -> None:
+        payload = json.dumps(remaining, indent=2) + "\n"
+        temp = self.queue_path.with_name(f"{self.queue_path.name}.{os.getpid()}.tmp")
+        temp.write_text(payload, encoding="utf-8")
+        temp.replace(self.queue_path)
 
     def run_once(self) -> dict[str, int]:
         queue = self._load_queue()
@@ -85,7 +92,7 @@ class AutopilotLoop:
             else:
                 escalated += 1
 
-        self.queue_path.write_text(json.dumps(remaining, indent=2) + "\n", encoding="utf-8")
+        self._write_queue(remaining)
         return {"completed": completed, "escalated": escalated}
 
 
