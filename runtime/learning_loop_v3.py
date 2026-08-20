@@ -149,6 +149,16 @@ class LearningLoopV3:
             )
         return LearningOutcome(observation_id, status, evidence, learned, lesson)
 
+    def failure_count(self, strategy_id: str) -> int:
+        """Return persisted failure observations for one strategy."""
+        strategy_id = self._text(strategy_id, "strategy_id", 128)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM outcomes o JOIN observations i ON i.id = o.observation_id WHERE i.strategy_id=? AND o.status=?",
+                (strategy_id, OutcomeStatus.FAILURE.value),
+            ).fetchone()
+        return int(row[0])
+
     def consolidate(self, query: str, limit: int = 20):
         query = self._text(query, "query", self.MAX_TEXT)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
