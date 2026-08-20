@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib
 import sqlite3
 from pathlib import Path
+from uuid import uuid4
 
 _queue = importlib.import_module("07-AUTOMATION.bob.job_queue")
 Job = _queue.Job
@@ -36,6 +37,14 @@ class PersistentJobQueue:
     def close(self) -> None:
         self._conn.close()
 
+    def create(self, task: str, capability: str) -> Job:
+        if not isinstance(task, str) or not isinstance(capability, str):
+            raise ValueError("task and capability must be strings")
+        if not task.strip() or not capability.strip():
+            raise ValueError("task and capability must not be empty")
+        job = Job(uuid4().hex, task.strip(), capability.strip())
+        return self.put(job)
+
     def put(self, job: Job) -> Job:
         self._conn.execute(
             """INSERT INTO jobs(job_id, task, capability, state, worker_id, reason)
@@ -48,6 +57,35 @@ class PersistentJobQueue:
         )
         self._conn.commit()
         return job
+
+    def update(self, job_id: str, **changes: object) -> Job:
+        current = self.get(job_id)
+        if current is None:
+            raise KeyError(job_id)
+        allowed = {"task", "capability", "state", "worker_id", "reason"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"unsupported job fields: {sorted(unknown)}")
+        values = {
+            "task": current.task,
+            "capability": current.capability,
+            "state": current.state,
+            "worker_id": current.worker_id,
+            "reason": current.reason,
+        }
+        values.update(changes)
+        state = values["state"]
+        if isinstance(state, str):
+            state = JobState(state)
+        job = Job(
+            current.job_id,
+            str(values["task"]),
+            str(values["capability"]),
+            state,
+            values["worker_id"],
+            values["reason"],
+        )
+        return self.put(job)
 
     def get(self, job_id: str) -> Job | None:
         row = self._conn.execute(
