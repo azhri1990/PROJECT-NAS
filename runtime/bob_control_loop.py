@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from runtime.autopilot_governance import AutopilotGovernance, DecisionClass
+from runtime.bob_resilience import FailureLedger, RetryCircuitBreaker
 from runtime.policy import Capability, PolicyEngine, RiskLevel, ToolRequest
 
 _bob_queue = importlib.import_module("07-AUTOMATION.bob.job_queue")
@@ -15,9 +16,18 @@ JobState = _bob_queue.JobState
 
 
 class BobControlLoop:
-    """Run bounded local jobs without bypassing NAS governance."""
+    """Run bounded local jobs without bypassing NAS governance or retry controls."""
 
-    def __init__(self, *, policy: PolicyEngine | None = None, executor: Callable[[Job], Any] | None = None, queue: JobQueue | None = None, audit_limit: int = 200) -> None:
+    def __init__(
+        self,
+        *,
+        policy: PolicyEngine | None = None,
+        executor: Callable[[Job], Any] | None = None,
+        queue: JobQueue | None = None,
+        audit_limit: int = 200,
+        max_failures: int = 3,
+        failure_ledger: FailureLedger | None = None,
+    ) -> None:
         if audit_limit < 1:
             raise ValueError("audit_limit must be positive")
         self.policy = policy or PolicyEngine()
@@ -26,6 +36,8 @@ class BobControlLoop:
         self.queue = queue or JobQueue()
         self.audit: list[dict[str, Any]] = []
         self._audit_limit = audit_limit
+        self.failure_ledger = failure_ledger or FailureLedger()
+        self.circuit = RetryCircuitBreaker(max_failures=max_failures, ledger=self.failure_ledger)
 
     def _record(self, event: str, **data: Any) -> None:
         self.audit.append({"event": event, **data})
@@ -68,18 +80,31 @@ class BobControlLoop:
             return job
         if job.state is not JobState.QUEUED:
             raise ValueError(f"job cannot run from state: {job.state.value}")
+        if not self.circuit.allow(job.job_id):
+            blocked = self.queue.update(
+                job.job_id,
+                state=JobState.BLOCKED,
+                reason="retry circuit open; root-cause review required",
+            )
+            self._record("circuit_open", job_id=job.job_id, reason=blocked.reason)
+            return blocked
         running = self.queue.update(job.job_id, state=JobState.RUNNING)
         self._record("running", job_id=running.job_id)
         try:
             success = bool(self.executor(running))
         except Exception as exc:
-            failed = self.queue.update(job.job_id, state=JobState.FAILED, reason=f"executor error: {type(exc).__name__}")
-            self._record("failure", job_id=job.job_id, reason=failed.reason)
+            reason = f"executor error: {type(exc).__name__}"
+            failed = self.queue.update(job.job_id, state=JobState.FAILED, reason=reason)
+            self.circuit.record_failure(job.job_id, reason=reason)
+            self._record("failure", job_id=job.job_id, reason=failed.reason, failure_count=self.circuit.failure_count(job.job_id))
             return failed
         if not success:
-            failed = self.queue.update(job.job_id, state=JobState.FAILED, reason="executor reported failure")
-            self._record("failure", job_id=job.job_id, reason=failed.reason)
+            reason = "executor reported failure"
+            failed = self.queue.update(job.job_id, state=JobState.FAILED, reason=reason)
+            self.circuit.record_failure(job.job_id, reason=reason)
+            self._record("failure", job_id=job.job_id, reason=failed.reason, failure_count=self.circuit.failure_count(job.job_id))
             return failed
         succeeded = self.queue.update(job.job_id, state=JobState.SUCCEEDED, reason=None)
+        self.circuit.record_success(job.job_id)
         self._record("succeeded", job_id=job.job_id)
         return succeeded
