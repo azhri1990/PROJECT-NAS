@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from runtime.policy import Capability, RiskLevel, ToolRequest
+from runtime.policy import Capability, PolicyEngine, RiskLevel, ToolRequest
 
 
 class DecisionClass(str, Enum):
@@ -19,9 +19,19 @@ class GovernanceDecision:
 
 
 class AutopilotGovernance:
-    """Fail-closed decision classifier layered above the existing policy engine."""
+    """Fail-closed autonomy classifier layered above the NAS policy gate."""
+
+    def __init__(self, policy_engine: PolicyEngine | None = None) -> None:
+        self.policy_engine = policy_engine or PolicyEngine()
 
     def classify(self, request: ToolRequest) -> GovernanceDecision:
+        policy = self.policy_engine.evaluate(request)
+        if not policy.allowed:
+            return GovernanceDecision(
+                DecisionClass.ESCALATE,
+                f"NAS policy denied autonomous execution: {policy.reason}",
+            )
+
         if request.risk in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
             return GovernanceDecision(
                 DecisionClass.ESCALATE,
@@ -31,16 +41,11 @@ class AutopilotGovernance:
         if request.capability in {
             Capability.EXECUTE_PROCESS,
             Capability.NETWORK_ACCESS,
+            Capability.WRITE_REPOSITORY,
         }:
             return GovernanceDecision(
                 DecisionClass.ESCALATE,
-                "execution/network capability requires explicit approval",
-            )
-
-        if request.capability == Capability.WRITE_REPOSITORY:
-            return GovernanceDecision(
-                DecisionClass.ESCALATE,
-                "repository mutation requires explicit approval",
+                "capability requires explicit approval",
             )
 
         if request.capability not in set(Capability):
@@ -51,5 +56,5 @@ class AutopilotGovernance:
 
         return GovernanceDecision(
             DecisionClass.AUTO,
-            "bounded low-risk read operation may proceed autonomously",
+            "bounded low-risk read operation is permitted by NAS policy",
         )
