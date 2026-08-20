@@ -28,17 +28,24 @@ class BobFailureLearner:
         *,
         task: str,
         strategy_id: str,
+        failure_class: str,
         context: str,
         source: str,
         lesson: str,
     ) -> FailureDecision:
-        observation_id = self.loop.observe(task, strategy_id, context, source)
+        observation_id = self.loop.observe(
+            task,
+            strategy_id,
+            context,
+            source,
+            failure_class=failure_class,
+        )
         self.loop.record_outcome(
             observation_id,
             OutcomeStatus.FAILURE,
             evidence=1,
             lesson=lesson,
         )
-        failure_count = self.loop.failure_count(strategy_id)
+        failure_count = self.loop.failure_count(strategy_id, failure_class)
         action = "ESCALATE" if failure_count >= self.failure_threshold else "RETRY"
         return FailureDecision(action, failure_count)
