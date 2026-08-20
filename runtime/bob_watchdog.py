@@ -1,14 +1,10 @@
-"""Bounded fail-closed watchdog orchestration for PROJECT-BOB.
-
-The watchdog coordinates lifecycle decisions only. It never executes commands
-itself and never expands worker authority. Actual restart behavior is supplied
-by the caller and remains subject to the existing BOB/NAS policy boundary.
-"""
+"""Bounded fail-closed watchdog orchestration for PROJECT-BOB."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from runtime.bob_learning import FailureLesson, LearningLedger
 from runtime.bob_supervisor import PersistentSupervisor
 
 
@@ -28,6 +24,7 @@ class BoundedWatchdog:
         *,
         max_restarts: int = 3,
         cooldown_seconds: float = 30.0,
+        learning: LearningLedger | None = None,
     ) -> None:
         if max_restarts < 0:
             raise ValueError("max_restarts must be non-negative")
@@ -36,6 +33,7 @@ class BoundedWatchdog:
         self.supervisor = supervisor
         self.max_restarts = max_restarts
         self.cooldown_seconds = cooldown_seconds
+        self.learning = learning
         self._last_restart_at: float | None = None
 
     def inspect(self, *, now: float, timeout: float = 90.0) -> WatchdogDecision:
@@ -45,6 +43,10 @@ class BoundedWatchdog:
         action = self.supervisor.watchdog(now=now, timeout=timeout)
         if action == "healthy":
             return WatchdogDecision("continue", "heartbeat_fresh", False)
+
+        failure_class = "heartbeat_timeout"
+        if self.learning is not None and self.learning.should_escalate(failure_class):
+            return WatchdogDecision("escalate", "known_failure_class", False)
 
         if self.supervisor.state.restart_count >= self.max_restarts:
             return WatchdogDecision("escalate", "restart_budget_exhausted", False)
@@ -69,9 +71,17 @@ class BoundedWatchdog:
 
         try:
             self.supervisor.request_restart(restart)
-        except Exception:
-            # Supervisor persists OFFLINE on restart failure. Do not retry
-            # recursively or bypass the restart budget in this call.
+        except Exception as exc:
+            if self.learning is not None:
+                self.learning.record(
+                    FailureLesson(
+                        failure_class="heartbeat_timeout",
+                        root_cause=f"restart failed: {type(exc).__name__}",
+                        lesson="A heartbeat timeout can recur after a failed restart.",
+                        prevention="Escalate known heartbeat-timeout failures before another automatic restart.",
+                        regression="Watchdog must return escalate for a previously recorded heartbeat_timeout class.",
+                    )
+                )
             return WatchdogDecision("escalate", "restart_failed", False)
 
         self._last_restart_at = now
