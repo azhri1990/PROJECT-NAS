@@ -8,6 +8,7 @@ $LogDir = Join-Path $Root 'runtime\logs'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $Out = Join-Path $LogDir 'bob-autopilot.out.log'
 $Err = Join-Path $LogDir 'bob-autopilot.err.log'
-$Proc = Start-Process -FilePath $Python -ArgumentList @('-u', (Join-Path $Root 'runtime\bob_autopilot_daemon.py')) -WorkingDirectory $Root -RedirectStandardOutput $Out -RedirectStandardError $Err -PassThru
+$Proc = Start-Process -FilePath $Python -ArgumentList @('-u', '-m', 'runtime.bob_autopilot_daemon') -WorkingDirectory $Root -RedirectStandardOutput $Out -RedirectStandardError $Err -PassThru
 Write-Output "BOB autopilot started PID=$($Proc.Id)"
 Write-Output "Log: $Out"
+Write-Output "Error log: $Err"
