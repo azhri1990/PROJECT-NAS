@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import time
 from pathlib import Path
 
@@ -16,11 +17,47 @@ class SingleInstance:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._held = False
 
+    @staticmethod
+    def _process_exists(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        if os.name != "nt":
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True
+            return True
+
+        try:
+            completed = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError:
+            return False
+        return any(part.strip('"') == str(pid) for part in completed.stdout.splitlines()[0].split(",")[1:2]) if completed.stdout.strip() else False
+
     def acquire(self) -> bool:
         try:
             fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            return False
+            try:
+                raw_pid = self.path.read_text(encoding="utf-8").strip()
+                pid = int(raw_pid)
+            except (OSError, ValueError):
+                pid = 0
+            if pid and self._process_exists(pid):
+                return False
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                pass
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(str(os.getpid()))
         self._held = True
