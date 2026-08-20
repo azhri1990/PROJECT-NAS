@@ -8,7 +8,7 @@
 - `VERIFIED`: the applicable CI run completed successfully for the exact revision.
 - `ESCALATED`: automatic recovery is blocked because a known failure recurred or safety/verification evidence is insufficient.
 
-`VERIFIED` is never inferred from a branch name, a previous successful run, or a different commit SHA.
+`VERIFIED` is never inferred from a branch name, a previous successful run, a different commit SHA, or an empty legacy commit-status response.
 
 ## Failure-learning flow
 
@@ -21,7 +21,7 @@ failure
   -> if the known failure recurs: ESCALATED
 ```
 
-Lessons are durable state, not conversational memory.
+Every BOB failure is durable state, not conversational memory. The NAS learning loop records the task, strategy, failure class, context, source, lesson, and outcome evidence. Failure outcomes update the adaptive decision engine, while BOB escalation is scoped by `strategy_id + failure_class` so unrelated failures do not share one retry budget.
 
 ## Safe-stop rules
 
@@ -33,4 +33,8 @@ Routine build, test, verification, and bounded recovery actions do not require r
 
 ## CI trigger contract
 
-Runtime integration runs on `main`, on `bob/**` branch pushes, and on pull requests. A successful PR check is still evaluated against the exact revision under test before BOB can report `VERIFIED`.
+Runtime integration runs on `main`, on `bob/**` branch pushes, and on pull requests. A successful workflow run must be tied to the exact `head_sha` under test before BOB can report `VERIFIED`. The combined commit-status API is not the authoritative Actions execution signal.
+
+## 24/7 target
+
+The operational target is persistent supervisory capability, durable state, bounded recovery, and safe escalation across PC, tablet, and mobile/Termux. This does not promise that Android will keep one process alive indefinitely against OS lifecycle controls.
