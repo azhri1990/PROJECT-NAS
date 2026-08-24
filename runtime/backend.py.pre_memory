@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+import os, json, sqlite3, re, time, subprocess
+from typing import Dict, Any, List, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel
+import requests
+
+app = FastAPI(title="PROJECT-NAS Backend")
+
+# ============ Constants ============
+CHAT_TIMEOUT_SECONDS = 60
+MAX_CHAT_PROMPT_CHARS = 4000
+MAX_CHAT_CONTEXT_CHARS = 8000
+MAX_CHAT_RESPONSE_CHARS = 2000
+MAX_TODO_ID_CHARS = 64
+MAX_TODO_TEXT_CHARS = 500
+MAX_TODO_STATUS_CHARS = 32
+
+# ============ Session DB ============
+def resolve_session_db() -> str:
+    return "session.db"
+
+def get_db_conn():
+    db_path = resolve_session_db()
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, text TEXT, status TEXT, created_at TEXT, updated_at TEXT)")
+    return conn
+
+# ============ Git Info ============
+def get_repo_info() -> dict:
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+        branch = subprocess.check_output(["git", "branch", "--show-current"], stderr=subprocess.DEVNULL).decode().strip()
+        return {"commit": commit[:8], "branch": branch}
+    except:
+        return {"commit": "unknown", "branch": "unknown"}
+
+# ============ Tool Gateway ============
+class ToolGateway:
+    def __init__(self):
+        self._tools = {
+            "status.health": self._health,
+            "status.progress": self._progress,
+        }
+    def _health(self, _):
+        return {"status": "healthy", "timestamp": time.time()}
+    def _progress(self, params):
+        commits = params.get("commits", 10)
+        return {"commits": commits, "message": "Progress check"}
+    def execute(self, tool_name: str, params: dict) -> dict:
+        if tool_name not in self._tools:
+            raise KeyError(f"Tool not found: {tool_name}")
+        return self._tools[tool_name](params)
+
+TOOL_GATEWAY = ToolGateway()
+
+# ============ Chat Worker (Ollama) ============
+def _call_chat_worker(prompt: str, context: str) -> dict[str, Any]:
+    ollama_url = os.getenv("OLLAMA_API_URL", "http://127.0.0.1:11434/v1")
+    model = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
+    
+    full_prompt = f"{context}\n\n{prompt}" if context else prompt
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": full_prompt}],
+        "stream": False
+    }
+    
+    try:
+        response = requests.post(
+            f"{ollama_url}/chat/completions",
+            json=payload,
+            timeout=CHAT_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        data = response.json()
+        if "choices" in data and len(data["choices"]) > 0:
+            content = data["choices"][0]["message"]["content"]
+            return {"response": content[:MAX_CHAT_RESPONSE_CHARS]}
+        else:
+            raise HTTPException(status_code=502, detail="No response from Ollama")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=503, detail=f"Ollama unavailable: {str(e)}")
+
+# ============ Routes ============
+@app.get("/prompt")
+async def prompt_get(prompt: str):
+    return _call_chat_worker(prompt, "")
+
+@app.post("/chat")
+async def chat(payload: Dict[str, Any]):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+    prompt = payload.get("prompt")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Missing prompt field")
+    context = payload.get("context", "")
+    return _call_chat_worker(prompt, context)
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "timestamp": time.time()}
+
+@app.get("/progress")
+async def progress(commits: int = 10):
+    return TOOL_GATEWAY.execute("status.progress", {"commits": commits})
+
+@app.post("/tools/{tool_name}")
+async def execute_tool(tool_name: str, payload: Dict[str, Any]):
+    try:
+        return TOOL_GATEWAY.execute(tool_name, payload)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="tool not found")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
+
+@app.get("/todos")
+async def list_todos():
+    conn = get_db_conn()
+    try:
+        rows = conn.execute("SELECT id, text, status, created_at, updated_at FROM todos ORDER BY created_at DESC").fetchall()
+        return [{"id": r[0], "text": r[1], "status": r[2], "created_at": r[3], "updated_at": r[4]} for r in rows]
+    finally:
+        conn.close()
+
+@app.post("/todos")
+async def create_todo(payload: Dict[str, Any]):
+    text = payload.get("text", "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Missing text field")
+    import uuid
+    todo_id = str(uuid.uuid4())[:8]
+    conn = get_db_conn()
+    try:
+        conn.execute("INSERT INTO todos (id, text, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                     (todo_id, text, "pending"))
+        conn.commit()
+        return {"id": todo_id, "text": text, "status": "pending"}
+    finally:
+        conn.close()
+
+@app.put("/todos/{todo_id}")
+async def update_todo(todo_id: str, payload: Dict[str, Any]):
+    status = payload.get("status", "").strip()
+    if status not in ["pending", "done"]:
+        raise HTTPException(status_code=400, detail="status must be pending or done")
+    conn = get_db_conn()
+    try:
+        if not conn.execute("SELECT 1 FROM todos WHERE id=?", (todo_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="todo not found")
+        conn.execute("UPDATE todos SET status=?, updated_at=datetime('now') WHERE id=?", (status, todo_id))
+        conn.commit()
+        return {"updated": True, "id": todo_id}
+    finally:
+        conn.close()
+
+@app.get("/")
+async def root():
+    return {"service": "PROJECT-NAS local backend", "version": "0.2"}
+
+
+@app.post("/autopilot")
+async def autopilot(task: Dict[str, Any]):
+    """Execute an autonomous task using Ollama."""
+    task_description = task.get("task", "").strip()
+    if not task_description:
+        raise HTTPException(status_code=400, detail="Missing task description")
+
+    system_prompt = "You are BOB, the autonomous builder for PROJECT-NAS. Given a task, generate a Python script that accomplishes it. Return ONLY the Python code, with no explanation or markdown formatting. The code must be self-contained and use only standard library modules."
+    full_prompt = f"{system_prompt}\n\nTask: {task_description}\n\nPython code:"
+
+    try:
+        response = _call_chat_worker(full_prompt, "")
+        code = response.get("response", "")
+
+        import re
+        code = re.sub(r'^```python\s*', '', code)
+        code = re.sub(r'\s*```$', '', code)
+
+        import subprocess, tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(code)
+            temp_path = f.name
+
+        result = subprocess.run(['python3', temp_path], capture_output=True, text=True, timeout=30)
+        os.unlink(temp_path)
+
+        return {
+            "task": task_description,
+            "code": code,
+            "output": result.stdout,
+            "error": result.stderr if result.stderr else None,
+            "exit_code": result.returncode
+        }
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Execution timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Autopilot error: {str(e)}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# ============ AUTOPILOT ============
+@app.post("/autopilot")
+async def autopilot(task: Dict[str, Any]):
+    """Execute an autonomous task using Ollama."""
+    task_description = task.get("task", "").strip()
+    if not task_description:
+        raise HTTPException(status_code=400, detail="Missing task description")
+
+    # Build a prompt for the LLM to generate a plan and code
+    system_prompt = """You are BOB, the autonomous builder for PROJECT-NAS.
+Given a task, generate a Python script that accomplishes it.
+Return ONLY the Python code, with no explanation or markdown formatting.
+The code must be self-contained and use only standard library modules."""
+
+    full_prompt = f"{system_prompt}\n\nTask: {task_description}\n\nPython code:"
+
+    try:
+        response = _call_chat_worker(full_prompt, "")
+        code = response.get("response", "")
+
+        # Clean up the code (remove markdown code blocks if present)
+        import re
+        code = re.sub(r'^```python\s*', '', code)
+        code = re.sub(r'\s*```$', '', code)
+
+        # Execute the code in a sandboxed environment
+        import subprocess
+        import tempfile
+        import os
+
+        # Write code to a temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(code)
+            temp_path = f.name
+
+        # Execute the script
+        result = subprocess.run(
+            ['python3', temp_path],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        # Clean up
+        os.unlink(temp_path)
+
+        return {
+            "task": task_description,
+            "code": code,
+            "output": result.stdout,
+            "error": result.stderr if result.stderr else None,
+            "exit_code": result.returncode
+        }
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Execution timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Autopilot error: {str(e)}")
