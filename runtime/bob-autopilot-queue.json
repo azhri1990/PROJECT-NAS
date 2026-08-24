@@ -1,0 +1,23 @@
+[
+  {
+    "id": "routine-verification",
+    "step": "pytest",
+    "risk": "routine",
+    "max_retries": 2,
+    "attempt": 0
+  },
+  {
+    "id": "static-verification",
+    "step": "compile",
+    "risk": "routine",
+    "max_retries": 1,
+    "attempt": 0
+  },
+  {
+    "id": "diff-verification",
+    "step": "diff-check",
+    "risk": "routine",
+    "max_retries": 1,
+    "attempt": 0
+  }
+]
