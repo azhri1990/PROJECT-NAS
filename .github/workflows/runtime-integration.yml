@@ -2,7 +2,9 @@ name: PROJECT-NAS Runtime Integration
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'bob/**'
   pull_request:
 
 permissions:
