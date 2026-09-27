@@ -1,11 +1,17 @@
+import os
 from pathlib import Path
 
 from runtime.bob_autopilot_runner import run_step
 
 
+def _venv_python(root: Path) -> Path:
+    """Mirror the runner's platform branch: Scripts/ on Windows, bin/ elsewhere."""
+    return root / ".venv" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+
+
 def test_runner_executes_pytest_with_project_virtualenv(tmp_path: Path, monkeypatch):
     calls = []
-    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python = _venv_python(tmp_path)
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("", encoding="utf-8")
 
@@ -32,7 +38,7 @@ def test_runner_rejects_arbitrary_shell(tmp_path: Path):
 
 
 def test_runner_maps_build_checks_to_fixed_commands(tmp_path: Path, monkeypatch):
-    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python = _venv_python(tmp_path)
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("", encoding="utf-8")
 

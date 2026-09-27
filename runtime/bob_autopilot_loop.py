@@ -45,53 +45,63 @@ class AutopilotLoop:
         temp.replace(self.queue_path)
 
     def run_once(self) -> dict[str, int]:
-        queue = self._load_queue()
+        pending = self._load_queue()
         remaining: list[dict[str, Any]] = []
         completed = 0
         escalated = 0
 
-        for task in queue:
-            task_id = str(task.get("id", ""))
-            step = str(task.get("step", ""))
-            risk = str(task.get("risk", "routine"))
-            max_retries = int(task.get("max_retries", 2))
-            attempt = int(task.get("attempt", 0))
-            if not task_id or not step:
-                escalated += 1
-                self._write_event(task_id or "unknown", "ESCALATE", reason="malformed task")
-                continue
+        # Drain the retry budget inside a single run_once. A task that comes back
+        # RETRY is picked up again on the next pass here, so one call settles the
+        # whole bounded lifecycle (attempt, retry, then escalate) instead of
+        # deferring the second half to the following invocation, which left a
+        # bounded task silently neither completed nor escalated. The loop is
+        # bounded because decide_next escalates once attempt >= max_retries.
+        while pending:
+            remaining = []
+            for task in pending:
+                task_id = str(task.get("id", ""))
+                step = str(task.get("step", ""))
+                risk = str(task.get("risk", "routine"))
+                max_retries = int(task.get("max_retries", 2))
+                attempt = int(task.get("attempt", 0))
+                if not task_id or not step:
+                    escalated += 1
+                    self._write_event(task_id or "unknown", "ESCALATE", reason="malformed task")
+                    continue
 
-            result = run_step(step, cwd=self.cwd)
-            if result.ok:
+                result = run_step(step, cwd=self.cwd)
+                if result.ok:
+                    decision = decide_next(
+                        risk=risk,
+                        verified=True,
+                        attempt=attempt,
+                        max_retries=max_retries,
+                    )
+                    if decision.action is AutopilotAction.PROCEED:
+                        completed += 1
+                        self._write_event(task_id, "COMPLETED", step=step, attempt=attempt)
+                    else:
+                        escalated += 1
+                        self._write_event(task_id, "ESCALATE", step=step, reason=decision.reason)
+                    continue
+
                 decision = decide_next(
                     risk=risk,
-                    verified=True,
+                    verified=False,
                     attempt=attempt,
                     max_retries=max_retries,
+                    failure_class=f"step:{step}",
                 )
-                if decision.action is AutopilotAction.PROCEED:
-                    completed += 1
-                    self._write_event(task_id, "COMPLETED", step=step, attempt=attempt)
+                self._write_event(task_id, decision.action.value.upper(), step=step, attempt=decision.attempt, reason=result.error or "step failed")
+                if decision.action is AutopilotAction.RETRY:
+                    updated = dict(task)
+                    updated["attempt"] = decision.attempt
+                    remaining.append(updated)
                 else:
                     escalated += 1
-                    self._write_event(task_id, "ESCALATE", step=step, reason=decision.reason)
-                continue
 
-            decision = decide_next(
-                risk=risk,
-                verified=False,
-                attempt=attempt,
-                max_retries=max_retries,
-                failure_class=f"step:{step}",
-            )
-            self._write_event(task_id, decision.action.value.upper(), step=step, attempt=decision.attempt, reason=result.error or "step failed")
-            if decision.action is AutopilotAction.RETRY:
-                updated = dict(task)
-                updated["attempt"] = decision.attempt
-                remaining.append(updated)
-            else:
-                escalated += 1
 
+            pending = remaining
         self._write_queue(remaining)
         return {"completed": completed, "escalated": escalated}
 

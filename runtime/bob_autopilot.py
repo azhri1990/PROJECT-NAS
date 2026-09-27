@@ -57,11 +57,20 @@ def decide_next(
             attempt,
         )
 
+    # An unclassified failure is not a bounded failure class, so there is no
+    # evidence that another attempt would converge. Fail closed and hand it to
+    # the operator rather than spending the retry budget on an unknown cause.
+    if not failure_class:
+        return AutopilotDecision(
+            AutopilotAction.ESCALATE,
+            "verification is missing and the failure is unclassified",
+            attempt,
+        )
+
     if attempt < max_retries:
-        label = failure_class or "unclassified_failure"
         return AutopilotDecision(
             AutopilotAction.RETRY,
-            f"retrying bounded failure class: {label}",
+            f"retrying bounded failure class: {failure_class}",
             attempt + 1,
         )
 
