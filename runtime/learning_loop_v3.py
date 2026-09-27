@@ -21,6 +21,7 @@ class LearningObservation:
     context: str
     source: str
     created_at: str
+    failure_class: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class LearningLoopV3:
     MAX_CONTEXT = 2048
     MAX_SOURCE = 256
     MAX_LESSON = 2048
+    MAX_FAILURE_CLASS = 128
 
     def __init__(self, brain: Any, db_path: Path | str = Path("runtime/claude-mem-db/learning_loop_v3.sqlite3")) -> None:
         self.brain = brain
@@ -60,9 +62,13 @@ class LearningLoopV3:
                     strategy_id TEXT NOT NULL,
                     context TEXT NOT NULL,
                     source TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    failure_class TEXT
                 )"""
             )
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(observations)")}
+            if "failure_class" not in columns:
+                conn.execute("ALTER TABLE observations ADD COLUMN failure_class TEXT")
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS outcomes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,16 +92,26 @@ class LearningLoopV3:
             raise ValueError(f"{field} exceeds maximum length of {maximum}")
         return normalized
 
-    def observe(self, task: str, strategy_id: str, context: str, source: str) -> str:
+    def observe(
+        self,
+        task: str,
+        strategy_id: str,
+        context: str,
+        source: str,
+        *,
+        failure_class: str | None = None,
+    ) -> str:
         task = self._text(task, "task", self.MAX_TEXT)
         strategy_id = self._text(strategy_id, "strategy_id", 128)
         context = self._text(context, "context", self.MAX_CONTEXT)
         source = self._text(source, "source", self.MAX_SOURCE)
+        if failure_class is not None:
+            failure_class = self._text(failure_class, "failure_class", self.MAX_FAILURE_CLASS)
         observation_id = uuid.uuid4().hex[:24]
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO observations(id, task, strategy_id, context, source, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (observation_id, task, strategy_id, context, source, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO observations(id, task, strategy_id, context, source, created_at, failure_class) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (observation_id, task, strategy_id, context, source, datetime.now(timezone.utc).isoformat(), failure_class),
             )
         return observation_id
 
@@ -104,7 +120,9 @@ class LearningLoopV3:
             row = conn.execute("SELECT * FROM observations WHERE id=?", (observation_id,)).fetchone()
         if row is None:
             raise KeyError(f"observation not found: {observation_id}")
-        return LearningObservation(row["id"], row["task"], row["strategy_id"], row["context"], row["source"], row["created_at"])
+        return LearningObservation(
+            row["id"], row["task"], row["strategy_id"], row["context"], row["source"], row["created_at"], row["failure_class"]
+        )
 
     def record_outcome(
         self,
@@ -148,6 +166,24 @@ class LearningLoopV3:
                 (observation_id, status.value, evidence, lesson, int(learned), datetime.now(timezone.utc).isoformat()),
             )
         return LearningOutcome(observation_id, status, evidence, learned, lesson)
+
+    def failure_count(self, strategy_id: str, failure_class: str | None = None) -> int:
+        """Return persisted failure observations, optionally scoped to a failure class."""
+        strategy_id = self._text(strategy_id, "strategy_id", 128)
+        if failure_class is not None:
+            failure_class = self._text(failure_class, "failure_class", self.MAX_FAILURE_CLASS)
+        with self._connect() as conn:
+            if failure_class is None:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM outcomes o JOIN observations i ON i.id = o.observation_id WHERE i.strategy_id=? AND o.status=?",
+                    (strategy_id, OutcomeStatus.FAILURE.value),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM outcomes o JOIN observations i ON i.id = o.observation_id WHERE i.strategy_id=? AND i.failure_class=? AND o.status=?",
+                    (strategy_id, failure_class, OutcomeStatus.FAILURE.value),
+                ).fetchone()
+        return int(row[0])
 
     def consolidate(self, query: str, limit: int = 20):
         query = self._text(query, "query", self.MAX_TEXT)
